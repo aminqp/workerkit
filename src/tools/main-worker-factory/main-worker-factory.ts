@@ -36,6 +36,7 @@ class MainWorkerFactory {
       const foundWorker = this._workers.find(
         (worker) => worker.name === workerName,
       );
+
       if (!foundWorker) {
         reject(new Error(`Worker ${workerName} not found`));
 
@@ -43,12 +44,31 @@ class MainWorkerFactory {
       }
 
       const result: any = [];
-      let isFinished = false;
+      const threads =
+        foundWorker.maxConcurrency || navigator.hardwareConcurrency;
 
-      Array(foundWorker.maxConcurrency || 1)
+      const someErrorThread = function () {
+        let counter = 0
+        while (counter < 99999){
+          counter += 1
+        };
+        throw new Error('someErrorThread');
+      }
+
+      Array(threads)
         .fill(0)
-        .forEach((_, idx) => {
-          const worker = this.initWorker(foundWorker.func);
+        .forEach((_,idx) => {
+          // let worker = idx !== 3 ? this.initWorker(foundWorker.func) : this.initWorker(someErrorThread);
+          let worker = this.initWorker(foundWorker.func)
+
+          // TODO-qp:: handle failed threads
+          worker.getWorker.onerror = (event) => {
+            console.log(`\n\n<<<<<  worker.getWorker.onerror >>>>> => event -> `, event);
+            worker.getWorker.terminate();
+
+            worker = this.initWorker(foundWorker.func);
+            console.log(`\n\n<<<<<  worker.getWorker.onerror >>>>> => worker -> `, worker);
+          }
 
           worker.getWorker.onmessage = (event) => {
             console.log(
@@ -56,25 +76,15 @@ class MainWorkerFactory {
             );
             result.push(event.data);
 
-            console.log(
-              `\n\n<<<<<  Array(foundWorker.maxConcurrency  >>>>> => idx === foundWorker.maxConcurrency -> `,
-              idx,
-              foundWorker.maxConcurrency,
-              idx === foundWorker.maxConcurrency,
-            );
-            if (idx === foundWorker.maxConcurrency) {
-              isFinished = true;
+            if (result.length === threads) {
+              console.log(`\n\n<<<<< IS FINISHED  >>>>> =>  -> `);
+              resolve(result);
             }
             worker.getWorker.terminate();
           };
 
           worker.getWorker.postMessage(data);
         });
-
-      console.log('>>> result', result);
-      if (isFinished) {
-        resolve(result);
-      }
     });
   }
 

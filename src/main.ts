@@ -12,9 +12,18 @@ function handleWorkers(workers: WorkerConfig[]): void {
   console.log(worker);
   const btn = document.getElementById('increaseByOne')!;
 
+
   btn.onclick = () => {
+    const begin = performance.now();
+    console.log(`\n\n<<<<< THREAD IS STARTED  >>>>> =>  -> `);
+
     worker.runWorker('exp1', { seconds: 10 }).then((res) => {
       console.log(`\n\n<<<<< btn.onclick  >>>>> => res -> `, res);
+      console.log(
+        `\n\n<<<<<  THREAD IS FINISHED IN >>>>> =>  -> `,
+        performance.now() - begin,
+        'ms',
+      );
     });
   };
 }
@@ -24,6 +33,6 @@ handleWorkers([
     name: 'exp1',
     role: 'computation',
     func: expensiveComputation1,
-    maxConcurrency: 4,
+    // maxConcurrency: navigator.hardwareConcurrency,
   },
 ]);

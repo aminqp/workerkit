@@ -1,7 +1,6 @@
 const workerTemplate = (func: string) => `
 self.addEventListener('message', (event) => {
-    var begin = performance.now();
-
+    const begin = performance.now();
     console.log('start');
 
     const output = ${func}(event.data);
