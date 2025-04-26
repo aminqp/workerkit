@@ -1,9 +1,10 @@
 import {
   MainWorkerFactoryOptions,
-  MainWorkerFactoryWorker, WorkerConfig,
+  MainWorkerFactoryWorker,
+  WorkerConfig,
   WorkerFunction,
   WorkerInstanceConfig,
-  WorkerResult
+  WorkerResult,
 } from './types.ts';
 import { WorkerFactory } from '../worker-factory';
 
@@ -12,11 +13,11 @@ enum RESULT_STATUS {
   REJECTED = 'rejected',
 }
 
-const threadHasError = function() {
+const threadHasError = function () {
   let seconds = 5;
   seconds *= Math.random() + 0.5;
   let start = new Date();
-  while ((new Date().valueOf() - start.valueOf()) / 1000 < seconds) ;
+  while ((new Date().valueOf() - start.valueOf()) / 1000 < seconds);
 
   throw new Error('someErrorThread');
 };
@@ -93,7 +94,10 @@ class MainWorkerFactory {
    */
   async runWorker(
     workerName: string,
-    { srcData, ...otherParams }: { srcData: unknown | unknown[] } & Record<string, unknown>,
+    {
+      srcData,
+      ...otherParams
+    }: { srcData: unknown | unknown[] } & Record<string, unknown>,
   ): Promise<PromiseSettledResult<WorkerResult>[]> {
     console.log('\n\n <<<<  runWorker >>>> => srcData -> ', srcData);
     const foundWorker = this.findWorkerByName(workerName);
@@ -105,7 +109,7 @@ class MainWorkerFactory {
 
     const threadCount = foundWorker.maxConcurrency || this._threads;
     const shouldPartition = Boolean(
-      Array.isArray(srcData) && foundWorker.partition,
+      Array.isArray(srcData) && srcData.length > 1 && foundWorker.partition,
     );
 
     // Prepare data for worker(s)
@@ -138,7 +142,7 @@ class MainWorkerFactory {
    * Creates promises for each worker instance
    * @param workerConfig The worker configuration
    * @param workerName The name of the worker
-   * @param data The data for the workers
+   * @param srcWorkerData
    * @param threadCount The number of threads to use
    * @param isPartitioned Whether the data is partitioned
    * @returns An array of promises for the worker executions
@@ -146,24 +150,25 @@ class MainWorkerFactory {
   private createWorkerPromises(
     workerConfig: WorkerConfig,
     workerName: string,
-    data: unknown | unknown[][],
+    srcWorkerData: { data: unknown | unknown[][] } & Partial<
+      Record<string, unknown>
+    >,
     threadCount: number,
     isPartitioned: boolean,
   ): Promise<WorkerResult>[] {
-    console.log('\n\n <<<<  createWorkerPromises >>>> => data -> ', data);
-
+    const { data: srcData, ...otherParams } = srcWorkerData;
     return Array(threadCount)
       .fill(0)
       .map((_, index) => {
         const workerData =
-          isPartitioned && Array.isArray(data) ? data[index] : data;
+          isPartitioned && Array.isArray(srcData) ? srcData[index] : srcData;
 
         return this.runWorkerWithRetry(
           {
             workerFunc: workerConfig.func,
             workerName,
             index,
-            data: workerData,
+            data: { data: workerData, ...otherParams },
           },
           workerConfig.retries,
         );
