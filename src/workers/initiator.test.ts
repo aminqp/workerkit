@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import initiator from '../workers/initiator';
 
 // Minimal self mock
@@ -18,13 +18,19 @@ function makeSelfMock() {
   };
 }
 
+const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
 describe('initiator', () => {
   let selfMock: ReturnType<typeof makeSelfMock>;
 
   beforeEach(() => {
     selfMock = makeSelfMock();
     vi.stubGlobal('self', selfMock);
-    vi.spyOn(console, 'log').mockImplementation(() => {});
+    logSpy.mockClear();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   // --- positive tests ---
@@ -52,16 +58,24 @@ describe('initiator', () => {
 
   it('echoes back an array payload', () => {
     initiator();
-    const payload = [1, 2, 3];
+    const payload = [
+      { id: 1, name: 'Alice', score: 98.5 },
+      { id: 2, name: 'Bob', score: 74.0 },
+      { id: 3, name: 'Carol', score: 88.3 },
+    ];
     selfMock.dispatch('message', payload);
     expect(selfMock.postMessage).toHaveBeenCalledWith(payload);
   });
 
   // --- native behaviour tests ---
 
-  it('logs "Initiator: " on invocation', () => {
+  it('registers exactly one listener per invocation', () => {
     initiator();
-    expect(console.log).toHaveBeenCalledWith('Initiator: ');
+    expect(selfMock.addEventListener).toHaveBeenCalledTimes(1);
+    expect(selfMock.addEventListener).toHaveBeenCalledWith(
+      'message',
+      expect.any(Function),
+    );
   });
 
   it('each call to initiator() registers an independent listener', () => {
