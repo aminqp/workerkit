@@ -1,6 +1,6 @@
 {
   "name": "web-worker-manager",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A lightweight manager for running functions in Web Workers with partitioning, retries, and concurrency control",
   "type": "module",
   "main": "./dist/index.cjs",
