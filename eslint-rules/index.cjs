@@ -15,7 +15,7 @@ module.exports = {
    *
    * @example
    * // eslint.config.js
-   * import workerPlugin from 'web-worker-manager/eslint-plugin';
+   * import workerPlugin from 'workerkit/eslint-plugin';
    * export default [ ...workerPlugin.configs.recommended ];
    */
   configs: {
@@ -23,11 +23,11 @@ module.exports = {
       {
         files: ['**/*.worker.ts', '**/*.worker.js'],
         plugins: {
-          'web-worker-manager': module.exports,
+          workerkit: module.exports,
         },
         rules: {
-          'web-worker-manager/no-dom-in-worker': 'error',
-          'web-worker-manager/worker-exportable': 'error',
+          'workerkit/no-dom-in-worker': 'error',
+          'workerkit/worker-exportable': 'error',
         },
       },
     ],

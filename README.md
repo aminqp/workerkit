@@ -1,4 +1,4 @@
-# web-worker-manager
+# workerkit
 
 A lightweight TypeScript library for running functions in Web Workers with support for partitioning, retries, and concurrency control — all without the boilerplate.
 
@@ -9,9 +9,9 @@ Instead of manually creating worker scripts and wiring up `postMessage` / `onmes
 ## Installation
 
 ```bash
-npm install web-worker-manager
+npm install workerkit
 # or
-pnpm add web-worker-manager
+pnpm add workerkit
 ```
 
 ---
@@ -32,7 +32,7 @@ export function sum({ data }: { data: number[] }): number {
 ### 2. Register and run it
 
 ```ts
-import { MainWorkerFactory } from 'web-worker-manager';
+import { MainWorkerFactory } from 'workerkit';
 import { sum } from './sum.worker.ts';
 
 const factory = new MainWorkerFactory(initiator, {
@@ -98,7 +98,7 @@ The package ships with two ESLint rules to catch common worker mistakes at lint 
 
 ```js
 // eslint.config.js
-import workerPlugin from 'web-worker-manager/eslint-plugin';
+import workerPlugin from 'workerkit/eslint-plugin';
 
 export default [...workerPlugin.configs.recommended];
 ```
@@ -150,14 +150,14 @@ You can also import rules individually if you don't want the full recommended co
 
 ```js
 // eslint.config.js
-import noDomInWorker from 'web-worker-manager/eslint-rules/no-dom-in-worker';
-import workerExportable from 'web-worker-manager/eslint-rules/worker-exportable';
+import noDomInWorker from 'workerkit/eslint-rules/no-dom-in-worker';
+import workerExportable from 'workerkit/eslint-rules/worker-exportable';
 
 export default [
   {
     files: ['**/*.worker.ts'],
     plugins: {
-      'web-worker-manager': {
+      workerkit: {
         rules: {
           'no-dom-in-worker': noDomInWorker,
           'worker-exportable': workerExportable,
@@ -165,8 +165,8 @@ export default [
       },
     },
     rules: {
-      'web-worker-manager/no-dom-in-worker': 'error',
-      'web-worker-manager/worker-exportable': 'warn',
+      'workerkit/no-dom-in-worker': 'error',
+      'workerkit/worker-exportable': 'warn',
     },
   },
 ];
