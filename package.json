@@ -45,6 +45,10 @@
     "browser"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aminqp/workerkit.git"
+  },
   "lint-staged": {
     "**/*.{ts,tsx}": [
       "eslint --fix",
