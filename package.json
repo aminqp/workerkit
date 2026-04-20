@@ -1,6 +1,6 @@
 {
   "name": "@offmain/workerkit",
-  "version": "0.8.8",
+  "version": "0.8.9",
   "description": "A lightweight manager for running functions in Web Workers with partitioning, retries, and concurrency control",
   "type": "module",
   "main": "./dist/index.cjs",
