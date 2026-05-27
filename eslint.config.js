@@ -6,6 +6,11 @@ import localRules from 'eslint-plugin-local-rules';
 
 /** @type {import('eslint').Linter.FlatConfig[]} */
 export default [
+  // Global ignores
+  {
+    ignores: ['dist/**', 'node_modules/**'],
+  },
+
   // Base config for all TypeScript files
   {
     files: ['**/*.ts', '**/*.tsx'],
