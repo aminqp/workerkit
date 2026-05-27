@@ -1,6 +1,5 @@
-import initiator from './workers/initiator.ts';
 import expensiveComputation1 from './examples/expensive-computation-1.worker.ts';
-import { MainWorkerFactory, WorkerConfig } from './tools';
+import { MainWorkerFactory } from './tools';
 import { transformArray } from './examples/list-transformer.worker.ts';
 import { generateRandomData } from './examples/mocker.worker.ts';
 import {
@@ -13,6 +12,7 @@ import {
   processImageData,
 } from './examples/image-processor.worker.ts';
 import { generateLogs, analyzeLogs } from './examples/log-analyzer.worker.ts';
+import type { LogReport } from './examples/log-analyzer.worker.ts';
 import {
   generateDelayedTasks,
   runDelayedTask,
@@ -30,12 +30,10 @@ import { fetchAndEnrichPosts } from './examples/fetch-posts.worker.ts';
 import type { EnrichedPost } from './examples/fetch-posts.worker.ts';
 import type { DelayedTaskResult } from './examples/delayed-task.worker.ts';
 import type { FlakyTaskResult } from './examples/flaky-task.worker.ts';
-import type { SearchResult } from './examples/partial-results.worker.ts';
-import type { LogReport } from './examples/log-analyzer.worker.ts';
 
 // --- worker setup ---
 
-const workerConfigs: WorkerConfig[] = [
+const workerConfigs = [
   {
     name: 'exp1',
     role: 'computation',
@@ -149,9 +147,9 @@ const workerConfigs: WorkerConfig[] = [
     func: fetchAndEnrichPosts,
     maxConcurrency: 1,
   },
-];
+] as const;
 
-const foreman = new MainWorkerFactory(initiator, { workers: workerConfigs });
+const foreman = new MainWorkerFactory({ workers: workerConfigs });
 
 // --- UI helpers ---
 
@@ -222,8 +220,13 @@ document.getElementById('btn-exp1')!.onclick = async () => {
   setRunning('exp1', btn);
   try {
     const res = await foreman.runWorker('exp1', { srcData: { seconds: 10 } });
-    const { data } = await foreman.collectResults<unknown[]>(res);
-    setDone('exp1', btn, performance.now() - begin, preview(data as unknown[]));
+    const { data } = await foreman.collectResults(res);
+    setDone(
+      'exp1',
+      btn,
+      performance.now() - begin,
+      preview([data] as unknown[]),
+    );
   } catch (e) {
     setError('exp1', btn, e);
   }
@@ -237,10 +240,9 @@ document.getElementById('btn-gen')!.onclick = async () => {
   setRunning('gen', btn);
   try {
     const res = await foreman.runWorker('generateRandomData', {
-      srcData: {},
-      count: 300000,
+      srcData: { count: 300000 },
     });
-    const { data } = await foreman.collectResults<unknown[]>(res);
+    const { data } = await foreman.collectResults(res);
     setDone(
       'gen',
       btn,
@@ -260,10 +262,9 @@ document.getElementById('btn-transform')!.onclick = async () => {
   setRunning('transform', btn);
   try {
     const genRes = await foreman.runWorker('generateRandomData', {
-      srcData: {},
-      count: 300000,
+      srcData: { count: 300000 },
     });
-    const { data: testData } = await foreman.collectResults<unknown[]>(genRes);
+    const { data: testData } = await foreman.collectResults(genRes);
     setStatus('transform', 'running', `transforming ${testData.length} items…`);
     const transformRes = await foreman.runWorker('transformArray', {
       srcData: testData,
@@ -275,8 +276,7 @@ document.getElementById('btn-transform')!.onclick = async () => {
         multiplier: 'multiplier',
       },
     });
-    const { data: result } =
-      await foreman.collectResults<unknown[]>(transformRes);
+    const { data: result } = await foreman.collectResults(transformRes);
     setDone(
       'transform',
       btn,
@@ -297,15 +297,14 @@ document.getElementById('btn-list')!.onclick = async () => {
   try {
     const genRes = await foreman.runWorker(
       'generateListTransformArrayTestData',
-      { srcData: {}, count: 30000 },
+      { srcData: { count: 30000 } },
     );
-    const { data: testData } = await foreman.collectResults<unknown[]>(genRes);
+    const { data: testData } = await foreman.collectResults(genRes);
     setStatus('list', 'running', `transforming ${testData.length} records…`);
     const transformRes = await foreman.runWorker('listTransformArray', {
       srcData: testData,
     });
-    const { data: result } =
-      await foreman.collectResults<unknown[]>(transformRes);
+    const { data: result } = await foreman.collectResults(transformRes);
     setDone(
       'list',
       btn,
@@ -375,10 +374,9 @@ document.getElementById('btn-logs')!.onclick = async () => {
   setRunning('logs', btn);
   try {
     const genRes = await foreman.runWorker('generateLogs', {
-      srcData: {},
-      count: 500000,
+      srcData: { count: 500000 },
     });
-    const { data: logs } = await foreman.collectResults<unknown[]>(genRes);
+    const { data: logs } = await foreman.collectResults(genRes);
     setStatus('logs', 'running', `analysing ${logs.length} log entries…`);
 
     const analyzeRes = await foreman.runWorker('analyzeLogs', {
@@ -387,16 +385,7 @@ document.getElementById('btn-logs')!.onclick = async () => {
 
     // merge shard reports off the main thread using a custom reducer
     setStatus('logs', 'running', 'merging shard reports…');
-    const { data: merged } = await foreman.collectResults<
-      LogReport,
-      {
-        total: number;
-        errorRate: string;
-        avgDurationMs: string;
-        byLevel: Record<string, number>;
-        byService: Record<string, number>;
-      }
-    >(analyzeRes, {
+    const { data: merged } = await foreman.collectResults(analyzeRes, {
       reducer: (shards: LogReport[]) => {
         const acc = {
           total: 0,
@@ -455,13 +444,7 @@ document.getElementById('btn-delayed')!.onclick = async () => {
     const genRes = await foreman.runWorker('generateDelayedTasks', {
       srcData: { count: 6, minMs: 2000, maxMs: 5000 },
     });
-    const { data: tasks } = await foreman.collectResults<
-      {
-        taskId: string;
-        delayMs: number;
-        payload: { category: string; priority: string };
-      }[]
-    >(genRes);
+    const { data: tasks } = await foreman.collectResults(genRes);
     setStatus(
       'delayed',
       'running',
@@ -475,9 +458,7 @@ document.getElementById('btn-delayed')!.onclick = async () => {
       data: results,
       succeeded,
       failed,
-    } = await foreman.collectResults<DelayedTaskResult, DelayedTaskResult[]>(
-      taskRes,
-    );
+    } = await foreman.collectResults(taskRes);
 
     const summary = [
       `${succeeded} / ${succeeded + failed} tasks completed`,
@@ -503,10 +484,7 @@ document.getElementById('btn-flaky')!.onclick = async () => {
     const genRes = await foreman.runWorker('generateFlakyTasks', {
       srcData: { count: 8 },
     });
-    const { data: tasks } =
-      await foreman.collectResults<
-        { taskId: string; failRate: number; workMs: number }[]
-      >(genRes);
+    const { data: tasks } = await foreman.collectResults(genRes);
     setStatus(
       'flaky',
       'running',
@@ -518,9 +496,7 @@ document.getElementById('btn-flaky')!.onclick = async () => {
       data: succeeded,
       failed,
       errors,
-    } = await foreman.collectResults<FlakyTaskResult, FlakyTaskResult[]>(
-      taskRes,
-    );
+    } = await foreman.collectResults(taskRes);
 
     const lines = [
       `${(succeeded as FlakyTaskResult[]).length} / ${(succeeded as FlakyTaskResult[]).length + failed} tasks succeeded  (${failed} exhausted retries)`,
@@ -548,14 +524,7 @@ document.getElementById('btn-partial')!.onclick = async () => {
     const genRes = await foreman.runWorker('generateSearchShards', {
       srcData: { shardCount: 8, query: 'web workers', failEvery: 3 },
     });
-    const { data: shards } = await foreman.collectResults<
-      {
-        shardId: number;
-        query: string;
-        itemCount: number;
-        shouldFail: boolean;
-      }[]
-    >(genRes);
+    const { data: shards } = await foreman.collectResults(genRes);
     setStatus('partial', 'running', `querying ${shards.length} search shards…`);
 
     const shardRes = await foreman.runWorker('searchShard', {
@@ -568,7 +537,7 @@ document.getElementById('btn-partial')!.onclick = async () => {
       data: allResults,
       succeeded,
       failed,
-    } = await foreman.collectResults<SearchResult[], SearchResult[]>(shardRes, {
+    } = await foreman.collectResults(shardRes, {
       reducer: (shards) => shards.flat().sort((a, b) => b.score - a.score),
     });
 
@@ -636,10 +605,7 @@ document.getElementById('btn-bench')!.onclick = async () => {
   });
   const workerTotalMs = Math.round(performance.now() - workerStart);
 
-  const { data: workerTasks } = await foreman.collectResults<
-    { size: number; durationMs: number; checksum: number },
-    { size: number; durationMs: number; checksum: number }[]
-  >(workerRes);
+  const { data: workerTasks } = await foreman.collectResults(workerRes);
 
   const speedup = (mainResult.totalMs / workerTotalMs).toFixed(2);
   workerEl.textContent = `${workerTotalMs} ms`;
@@ -678,7 +644,7 @@ document.getElementById('btn-fetch')!.onclick = async () => {
     const res = await foreman.runWorker('fetchAndEnrichPosts', {
       srcData: { limit: 20 },
     });
-    const { data } = await foreman.collectResults<EnrichedPost>(res);
+    const { data } = await foreman.collectResults(res);
     const posts = data as EnrichedPost[];
     const lines = [
       `${posts.length} posts fetched and enriched`,

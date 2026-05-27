@@ -2,16 +2,16 @@
 
 A lightweight TypeScript library for running functions in Web Workers with support for partitioning, retries, and concurrency control — all without the boilerplate.
 
-Instead of manually creating worker scripts and wiring up `postMessage` / `onmessage`, you write plain exported functions and hand them to `MainWorkerFactory`. The library serialises them into Blob workers, manages a pool per function, handles retries on failure, and merges results back on the main thread.
+Instead of manually creating worker scripts and wiring up `postMessage` / `onmessage`, you write plain exported functions and hand them to `MainWorkerFactory`. The library serializes them into Blob workers, manages threads per function, handles retries on failure, and merges results back on the main thread.
 
 ---
 
 ## Installation
 
 ```bash
-npm install workerkit
+npm install @offmain/workerkit
 # or
-pnpm add workerkit
+pnpm add @offmain/workerkit
 ```
 
 ---
@@ -32,10 +32,10 @@ export function sum({ data }: { data: number[] }): number {
 ### 2. Register and run it
 
 ```ts
-import { MainWorkerFactory } from 'workerkit';
+import { MainWorkerFactory } from '@offmain/workerkit';
 import { sum } from './sum.worker.ts';
 
-const factory = new MainWorkerFactory(initiator, {
+const factory = new MainWorkerFactory({
   workers: [
     {
       name: 'sum',
@@ -47,10 +47,10 @@ const factory = new MainWorkerFactory(initiator, {
   ],
 });
 
-const result = await factory.runWorker('sum', { srcData: [1, 2, 3, 4, 5] });
-const { data } = await factory.collectResults(result);
+const settled = await factory.runWorker('sum', { srcData: [1, 2, 3, 4, 5] });
+const { data } = await factory.collectResults(settled);
 
-console.log(data); // 15
+console.log(data); // [15]
 ```
 
 ---
@@ -63,7 +63,7 @@ console.log(data); // 15
 | `role`           | `string`   | —                               | Logical grouping label                                                                              |
 | `func`           | `Function` | —                               | The exported worker function to run                                                                 |
 | `maxConcurrency` | `number`   | `navigator.hardwareConcurrency` | Max parallel worker instances — defaults to the number of logical CPU cores reported by the browser |
-| `retries`        | `number`   | `0`                             | How many times to retry a failed shard                                                              |
+| `retries`        | `number`   | `0`                             | How many times to retry a failed shard before marking it as rejected                                |
 | `partition`      | `boolean`  | `false`                         | Split array input across multiple workers automatically                                             |
 
 ---
@@ -73,20 +73,22 @@ console.log(data); // 15
 When `partition: true`, an array passed as `srcData` is automatically split across worker instances and results are merged back.
 
 ```ts
-const result = await factory.runWorker('sum', {
+const settled = await factory.runWorker('sum', {
   srcData: largeArray, // split across workers
 });
 
-const { data, succeeded, failed } = await factory.collectResults(result);
+const { data, succeeded, failed } = await factory.collectResults(settled);
 ```
 
 You can also provide a custom reducer to control how shard results are merged:
 
 ```ts
-const { data } = await factory.collectResults(result, {
+const { data } = await factory.collectResults(settled, {
   reducer: (shards) => shards.flat().sort((a, b) => b.score - a.score),
 });
 ```
+
+> **Note:** The reducer runs inside a worker thread and must be self-contained — it cannot reference variables from the outer scope.
 
 ---
 
@@ -98,7 +100,7 @@ The package ships with two ESLint rules to catch common worker mistakes at lint 
 
 ```js
 // eslint.config.js
-import workerPlugin from 'workerkit/eslint-plugin';
+import workerPlugin from '@offmain/workerkit/eslint-plugin';
 
 export default [...workerPlugin.configs.recommended];
 ```
@@ -113,16 +115,16 @@ Flags usage of browser main-thread-only APIs that are unavailable inside Web Wor
 
 ```ts
 // sum.worker.ts ❌ — will be flagged
-export function sum({ data }: MessageEvent) {
+export function sum({ data }: { data: number[] }) {
   document.title = 'working...'; // Error: 'document' is not available inside Web Workers
-  return data.reduce((a: number, b: number) => a + b, 0);
+  return data.reduce((a, b) => a + b, 0);
 }
 ```
 
 ```ts
 // sum.worker.ts ✅
-export function sum({ data }: MessageEvent) {
-  return data.reduce((a: number, b: number) => a + b, 0);
+export function sum({ data }: { data: number[] }) {
+  return data.reduce((a, b) => a + b, 0);
 }
 ```
 
@@ -150,8 +152,8 @@ You can also import rules individually if you don't want the full recommended co
 
 ```js
 // eslint.config.js
-import noDomInWorker from 'workerkit/eslint-rules/no-dom-in-worker';
-import workerExportable from 'workerkit/eslint-rules/worker-exportable';
+import noDomInWorker from '@offmain/workerkit/eslint-rules/no-dom-in-worker';
+import workerExportable from '@offmain/workerkit/eslint-rules/worker-exportable';
 
 export default [
   {

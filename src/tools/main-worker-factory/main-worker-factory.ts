@@ -1,11 +1,14 @@
 import {
   CollectOptions,
   CollectedResult,
-  MainWorkerFactoryOptions,
   WorkerConfig,
+  WorkerConfigMap,
+  WorkerDataParam,
   WorkerFunction,
   WorkerInstanceConfig,
   WorkerResult,
+  WorkerReturnType,
+  TypedSettledResults,
 } from './types.ts';
 import { WorkerFactory } from '../worker-factory';
 
@@ -44,21 +47,68 @@ export function extractTransferables(
   );
 }
 
-class MainWorkerFactory {
+/**
+ * Central orchestrator for running typed Web Workers in parallel.
+ *
+ * `MainWorkerFactory` manages a registry of named worker configurations and
+ * handles the full lifecycle of each worker: spawning, partitioning input
+ * data across threads, retrying on failure, and collecting results.
+ *
+ * @typeParam TConfigs - A readonly tuple of {@link WorkerConfig} objects that
+ *   defines the set of available workers and their typed signatures.
+ *
+ * @example
+ * const foreman = new MainWorkerFactory({
+ *   workers: [
+ *     { name: 'sum', role: 'compute', func: sumWorker, partition: true },
+ *   ],
+ * });
+ *
+ * const settled = await foreman.runWorker('sum', { srcData: [1, 2, 3, 4] });
+ * const { data } = await foreman.collectResults(settled);
+ */
+class MainWorkerFactory<
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  TConfigs extends readonly WorkerConfig<WorkerFunction<any, any>>[],
+> {
   private readonly _workers: WorkerConfig[];
   private readonly _threads: number;
 
-  constructor(_initiator: WorkerFunction, options: MainWorkerFactoryOptions) {
-    this._workers = options.workers;
+  /**
+   * Creates a new `MainWorkerFactory`.
+   *
+   * @param options - Configuration object containing the `workers` registry.
+   */
+  constructor(options: { workers: TConfigs }) {
+    this._workers = options.workers as unknown as WorkerConfig[];
     this._threads = navigator.hardwareConcurrency;
   }
 
+  /**
+   * Instantiates a {@link WorkerFactory} for the given worker function.
+   *
+   * @param workerFunction - The function to run inside the worker thread.
+   * @returns A new `WorkerFactory` wrapping the worker.
+   */
   private initWorker(workerFunction: WorkerFunction): WorkerFactory {
     return new WorkerFactory(workerFunction);
   }
 
   /**
-   * Partitions an array into up to numChunks evenly-sized chunks.
+   * Splits an array into up to `numChunks` evenly-sized sub-arrays.
+   *
+   * When the array length is not evenly divisible, the first `remainder`
+   * chunks receive one extra element so no data is lost.
+   *
+   * @param array     - The source array to partition.
+   * @param numChunks - Maximum number of chunks to produce.
+   *   Clamped to `array.length` so you never get empty chunks.
+   * @returns An array of sub-arrays. Returns `[]` when `array` is empty.
+   * @throws {Error} When `numChunks` is not a positive integer.
+   *
+   * @example
+   * partitionArray([1, 2, 3, 4, 5], 3);
+   * // → [[1, 2], [3, 4], [5]]
    */
   partitionArray<T>(array: T[], numChunks: number): T[][] {
     if (!array.length) return [];
@@ -79,14 +129,54 @@ class MainWorkerFactory {
     return result;
   }
 
+  /**
+   * Looks up a registered worker configuration by name.
+   *
+   * @param name - The `name` field of the target {@link WorkerConfig}.
+   * @returns The matching config, or `undefined` if not found.
+   */
   private findWorkerByName(name: string): WorkerConfig | undefined {
     return this._workers.find((w) => w.name === name);
   }
 
-  async runWorker(
-    workerName: string,
-    { srcData, ...otherParams }: { srcData: unknown } & Record<string, unknown>,
-  ): Promise<PromiseSettledResult<WorkerResult>[]> {
+  /**
+   * Runs a named worker against the provided data, distributing work across
+   * threads when the worker is configured for partitioning.
+   *
+   * When `config.partition` is `true` and `srcData` is an array with more
+   * than one element, the array is split into up to `maxConcurrency` (or
+   * `navigator.hardwareConcurrency`) shards and each shard is processed by
+   * a separate worker thread in parallel.
+   *
+   * All threads are awaited with `Promise.allSettled`, so a failure in one
+   * shard does not cancel the others. Use {@link collectResults} to merge
+   * the settled output.
+   *
+   * @typeParam TName - The literal name of the worker to run (inferred from
+   *   the registered `workers` tuple).
+   *
+   * @param workerName - Name of the worker as declared in the `workers` config.
+   * @param params     - Object containing `srcData` (the payload) plus any
+   *   additional key/value pairs forwarded to the worker verbatim.
+   *
+   * @returns A {@link TypedSettledResults} wrapping the settled promises from
+   *   all spawned worker threads.
+   *
+   * @example
+   * const settled = await foreman.runWorker('sum', { srcData: [1, 2, 3] });
+   */
+  async runWorker<TName extends keyof WorkerConfigMap<TConfigs> & string>(
+    workerName: TName,
+    {
+      srcData,
+      ...otherParams
+    }: { srcData: WorkerDataParam<WorkerConfigMap<TConfigs>[TName]> } & Record<
+      string,
+      unknown
+    >,
+  ): Promise<
+    TypedSettledResults<WorkerReturnType<WorkerConfigMap<TConfigs>[TName]>>
+  > {
     const config = this.findWorkerByName(workerName);
     if (!config)
       return Promise.reject(new Error(`Worker "${workerName}" not found`));
@@ -108,9 +198,24 @@ class MainWorkerFactory {
       shouldPartition,
     );
 
-    return Promise.allSettled(promises);
+    const settled = await Promise.allSettled(promises);
+    return new TypedSettledResults(settled);
   }
 
+  /**
+   * Builds the array of per-thread worker promises for a single `runWorker`
+   * call.
+   *
+   * When `isPartitioned` is `true`, each promise receives its own slice of
+   * `srcData`; otherwise every thread receives the full payload.
+   *
+   * @param config         - The resolved {@link WorkerConfig} for this run.
+   * @param workerName     - Name used in error/retry logging.
+   * @param srcWorkerData  - Combined `{ data, ...otherParams }` payload.
+   * @param threadCount    - Number of parallel worker threads to spawn.
+   * @param isPartitioned  - Whether `data` is a pre-split array of shards.
+   * @returns An array of promises, one per thread.
+   */
   private createWorkerPromises(
     config: WorkerConfig,
     workerName: string,
@@ -135,6 +240,18 @@ class MainWorkerFactory {
     });
   }
 
+  /**
+   * Runs a single worker instance, retrying on failure up to `retryCount`
+   * times before re-throwing the last error.
+   *
+   * Each retry is logged to `console.error` with the remaining attempt count
+   * so failures are visible during development.
+   *
+   * @param instanceConfig - Full configuration for the worker instance.
+   * @param retryCount     - Remaining retry attempts (default `2`).
+   * @returns The successful {@link WorkerResult} once the worker resolves.
+   * @throws The last caught error when all retries are exhausted.
+   */
   private async runWorkerWithRetry(
     instanceConfig: WorkerInstanceConfig,
     retryCount = 2,
@@ -154,6 +271,24 @@ class MainWorkerFactory {
     }
   }
 
+  /**
+   * Spawns a single worker thread, posts the payload, and resolves or rejects
+   * based on the message the worker sends back.
+   *
+   * The worker is expected to respond with either:
+   * - `{ ok: true, data: T }` — success; resolves with a {@link WorkerResult}.
+   * - `{ ok: false, error: string }` — logical failure; rejects with a
+   *   structured error object.
+   *
+   * Any transferable objects found in the payload are moved (not copied) to
+   * the worker via the `transfer` list of `postMessage`.
+   *
+   * The underlying `Worker` is always terminated after the first message,
+   * whether it succeeded or failed.
+   *
+   * @param instanceConfig - Worker function, name, shard index, and data.
+   * @returns A promise that resolves with the worker's result.
+   */
   private initiateWorker({
     workerFunc,
     workerName,
@@ -174,10 +309,23 @@ class MainWorkerFactory {
       };
 
       raw.onmessage = (event) => {
+        if (event.data?.ok === false) {
+          raw.terminate();
+          reject({
+            index,
+            workerConfigs: { workerFunc, workerName, index, data },
+            failedResult: new ErrorEvent('error', {
+              message: event.data.error,
+            }),
+          });
+          return;
+        }
         resolve({
           index,
           workerConfigs: { workerFunc, workerName, index, data },
-          successResult: event,
+          successResult: new MessageEvent('message', {
+            data: event.data?.data,
+          }),
         });
         raw.terminate();
       };
@@ -191,10 +339,26 @@ class MainWorkerFactory {
   }
 
   /**
-   * Collects and merges the settled results from `runWorker` — off the main thread.
+   * Collects and merges the settled results from {@link runWorker} — off the
+   * main thread.
    *
-   * @param settled  The `PromiseSettledResult[]` returned by `runWorker`
-   * @param options  Optional `reducer` function (must be self-contained)
+   * Fulfilled shards are extracted and passed to the `reducer` function, which
+   * runs inside a dedicated inline worker so the merge itself never blocks the
+   * main thread. Failed shards are counted and their raw rejection reasons are
+   * preserved in `errors`.
+   *
+   * @typeParam T - The per-shard data type (inferred from `settled`).
+   * @typeParam R - The final merged output type (defaults to a flat array of
+   *   `T` items when no custom reducer is provided).
+   *
+   * @param settled  - The {@link TypedSettledResults} returned by `runWorker`.
+   * @param options  - Optional {@link CollectOptions}. Supply a `reducer` to
+   *   control how shards are merged. The reducer **must be self-contained**
+   *   (no closures over external variables) because it is serialised and run
+   *   inside a worker.
+   *
+   * @returns A {@link CollectedResult} with the merged `data`, counts of
+   *   `succeeded`/`failed` shards, and the raw `errors` array.
    *
    * @example
    * // default: flat array of all shard data
@@ -206,14 +370,17 @@ class MainWorkerFactory {
    *   reducer: (shards) => shards.flat().reduce((a, b) => a + b, 0),
    * });
    */
-  async collectResults<T = unknown, R = T[]>(
-    settled: PromiseSettledResult<WorkerResult>[],
+  async collectResults<
+    T = unknown,
+    R = T extends (infer Item)[] ? Item[] : T[],
+  >(
+    settled: TypedSettledResults<T>,
     options: CollectOptions<T, R> = {},
   ): Promise<CollectedResult<R>> {
-    const fulfilled = settled.filter(
+    const fulfilled = settled.results.filter(
       (r) => r.status === 'fulfilled',
     ) as PromiseFulfilledResult<WorkerResult>[];
-    const errors = settled.filter(
+    const errors = settled.results.filter(
       (r) => r.status === 'rejected',
     ) as PromiseRejectedResult[];
 
