@@ -94,7 +94,7 @@ describe('WorkerFactory – positive', () => {
     new WorkerFactory(() => {});
     const blobContent = blobParts[0][0] as string;
     expect(blobContent).toContain(
-      'self.postMessage(output, extractTransferables(output))',
+      'self.postMessage({ ok: true, data: output }, extractTransferables(output))',
     );
   });
 
@@ -120,10 +120,10 @@ describe('WorkerFactory – native behaviour', () => {
     expect(blobContent).toContain('event.data');
   });
 
-  it('generated code measures performance', () => {
+  it('generated code posts error on failure', () => {
     new WorkerFactory(() => {});
     const blobContent = blobParts[0][0] as string;
-    expect(blobContent).toContain('performance.now()');
+    expect(blobContent).toContain('ok: false');
   });
 
   it('_worker property is the same object as getWorker', () => {

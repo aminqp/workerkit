@@ -53,7 +53,7 @@ vi.mock('../worker-factory/worker-factory', () => {
 const noop: WorkerConfig['func'] = () => {};
 
 function makeFactory(configs: WorkerConfig[]) {
-  return new MainWorkerFactory(noop, { workers: configs });
+  return new MainWorkerFactory({ workers: configs });
 }
 
 /** Auto-respond to all pending worker instances after they are created */
@@ -138,8 +138,8 @@ describe('runWorker – positive', () => {
     await autoRespond({ value: 42 });
     const results = await promise;
 
-    expect(results).toHaveLength(1);
-    expect(results[0].status).toBe('fulfilled');
+    expect(results.results).toHaveLength(1);
+    expect(results.results[0].status).toBe('fulfilled');
   });
 
   it('passes srcData through to postMessage', async () => {
@@ -288,7 +288,7 @@ describe('runWorker – error handling', () => {
     workerInstances[1]?.respond({ ok: true });
 
     const results = await promise;
-    expect(results[0].status).toBe('fulfilled');
+    expect(results.results[0].status).toBe('fulfilled');
   });
 
   it('returns rejected result after exhausting all retries', async () => {
@@ -312,7 +312,7 @@ describe('runWorker – error handling', () => {
     workerInstances[1]?.fail();
 
     const results = await promise;
-    expect(results[0].status).toBe('rejected');
+    expect(results.results[0].status).toBe('rejected');
   });
 
   it('includes failedResult on worker error', async () => {
@@ -332,8 +332,8 @@ describe('runWorker – error handling', () => {
     workerInstances[0].fail();
 
     const results = await promise;
-    expect(results[0].status).toBe('rejected');
-    const reason = (results[0] as PromiseRejectedResult).reason;
+    expect(results.results[0].status).toBe('rejected');
+    const reason = (results.results[0] as PromiseRejectedResult).reason;
     expect(reason).toHaveProperty('failedResult');
   });
 });
@@ -421,7 +421,7 @@ describe('runWorker – edge cases', () => {
     await autoRespond();
     const results = await promise;
 
-    const indices = results
+    const indices = results.results
       .filter((r) => r.status === 'fulfilled')
       .map((r) => (r as PromiseFulfilledResult<WorkerResult>).value.index);
 
