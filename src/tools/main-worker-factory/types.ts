@@ -177,3 +177,11 @@ export interface CollectedResult<R> {
   /** Raw rejected results, if any */
   errors: PromiseRejectedResult[];
 }
+
+/** A single step in a worker pipeline */
+export interface PipelineStep {
+  /** Name of the registered worker to run */
+  worker: string;
+  /** Input data for the first step (subsequent steps receive previous output) */
+  srcData?: unknown;
+}

@@ -92,6 +92,68 @@ const { data } = await factory.collectResults(settled, {
 
 ---
 
+## Pipeline
+
+Chain multiple workers together so data flows directly between them via `MessageChannel` — without passing through the main thread between steps.
+
+### Why use a pipeline?
+
+In a traditional multi-step workflow, intermediate data is serialized back to the main thread after each step:
+
+```
+Main → Worker A → Main → Worker B → Main → Worker C → Main
+         ↑ serialize    ↑ serialize    ↑ serialize
+```
+
+With large datasets (100k+ records), each serialization round-trip adds significant overhead — both in time and memory pressure on the main thread. The pipeline eliminates this:
+
+```
+Main → Worker A → Worker B → Worker C → Main
+                ↑ MessageChannel      ↑ only final result
+```
+
+Only the final result crosses back to the main thread. If your pipeline generates 20 MB of intermediate data but produces a 1 KB summary, you save ~40 MB of serialization (two round-trips avoided).
+
+### Usage
+
+```ts
+import { MainWorkerFactory } from '@offmain/workerkit';
+import { fetchData, transform, aggregate } from './workers.ts';
+
+const factory = new MainWorkerFactory({
+  workers: [
+    { name: 'fetchData', role: 'io', func: fetchData },
+    { name: 'transform', role: 'compute', func: transform },
+    { name: 'aggregate', role: 'compute', func: aggregate },
+  ] as const,
+});
+
+const result = await factory.pipeline<AggregateResult>([
+  { worker: 'fetchData', srcData: { url: '/api/records' } },
+  { worker: 'transform' }, // receives fetchData output directly
+  { worker: 'aggregate' }, // receives transform output directly
+]);
+
+console.log(result); // only this small result crossed to main thread
+```
+
+### How each step receives data
+
+- The first step receives `srcData` as `{ data: srcData, index: 0 }` — same as `runWorker`.
+- Each subsequent step receives the previous step's output as `{ data: previousOutput, index: 0 }`.
+- Worker functions don't need any special handling — they use the same `{ data }` parameter signature as regular workers.
+
+### When to use pipeline vs runWorker
+
+| Scenario                                             | Use                     |
+| ---------------------------------------------------- | ----------------------- |
+| Single step, or steps that need partitioning/retries | `runWorker`             |
+| Multi-step chain where intermediate data is large    | `pipeline`              |
+| Steps that are independent (not sequential)          | `runWorker` in parallel |
+| Steps where only the final result matters to the UI  | `pipeline`              |
+
+---
+
 ## ESLint Plugin
 
 The package ships with two ESLint rules to catch common worker mistakes at lint time.

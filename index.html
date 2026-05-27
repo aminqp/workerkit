@@ -72,6 +72,90 @@
           <pre class="card-result" id="result-bench"></pre>
         </div>
 
+        <div class="card card-bench">
+          <div class="card-header">
+            <span class="card-tag">Pipeline</span>
+            <h2 class="card-title">Worker-to-Worker Pipeline</h2>
+            <p class="card-desc">
+              Chains 3 workers via <code>MessageChannel</code> — fetch →
+              transform → filter. Intermediate data flows directly between
+              workers without touching the main thread, reducing serialisation
+              overhead.
+            </p>
+          </div>
+          <div class="card-meta">
+            <span
+              >Pipeline:
+              <code>fetchPosts → transformPosts → filterPosts</code></span
+            >
+            <span>Method: <code>foreman.pipeline()</code></span>
+            <span
+              >Main-thread transfers: <code>1 (final result only)</code></span
+            >
+          </div>
+          <button id="btn-pipeline" type="button" class="run-btn">
+            Run pipeline
+          </button>
+          <div class="card-status" id="status-pipeline">idle</div>
+          <pre class="card-result" id="result-pipeline"></pre>
+        </div>
+
+        <div class="card card-bench">
+          <div class="card-header">
+            <span class="card-tag">Pipeline Benchmark</span>
+            <h2 class="card-title">Traditional vs Pipeline (100k records)</h2>
+            <p class="card-desc">
+              Generates 100k records (~22 MB), transforms them, then aggregates.
+              Runs both approaches: traditional (data crosses main thread 3×) vs
+              pipeline (data stays between workers, only the tiny aggregate
+              result crosses once). Shows the real cost of serialisation.
+            </p>
+          </div>
+          <div class="card-meta">
+            <span
+              >Pipeline:
+              <code
+                >generateLargeDataset → heavyTransform → aggregateResults</code
+              ></span
+            >
+            <span>Records: <code>100,000 × ~220 bytes</code></span>
+            <span
+              >Traditional: <code>3 large transfers</code> vs Pipeline:
+              <code>1 small transfer</code></span
+            >
+          </div>
+          <button id="btn-pipeline-bench" type="button" class="run-btn">
+            Run benchmark
+          </button>
+          <div class="card-status" id="status-pipeline-bench">idle</div>
+
+          <div class="bench-bars">
+            <div class="bench-row">
+              <span class="bench-label">Traditional</span>
+              <div class="bench-track">
+                <div
+                  class="bench-bar bench-bar--main"
+                  id="pipe-bar-traditional"
+                ></div>
+              </div>
+              <span class="bench-time" id="pipe-traditional-time">—</span>
+            </div>
+            <div class="bench-row">
+              <span class="bench-label">Pipeline</span>
+              <div class="bench-track">
+                <div
+                  class="bench-bar bench-bar--worker"
+                  id="pipe-bar-pipeline"
+                ></div>
+              </div>
+              <span class="bench-time" id="pipe-pipeline-time">—</span>
+            </div>
+            <div class="bench-speedup" id="pipe-speedup"></div>
+          </div>
+
+          <pre class="card-result" id="result-pipeline-bench"></pre>
+        </div>
+
         <!-- CPU-bound -->
         <div class="card">
           <div class="card-header">

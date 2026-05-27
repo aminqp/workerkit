@@ -4,6 +4,7 @@ export type {
   WorkerFunction,
   MainWorkerFactoryWorker,
   MainWorkerFactoryOptions,
+  PipelineStep,
   WorkerConfig,
   WorkerName,
   WorkerRole,

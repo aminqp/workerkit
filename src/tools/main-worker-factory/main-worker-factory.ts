@@ -1,6 +1,7 @@
 import {
   CollectOptions,
   CollectedResult,
+  PipelineStep,
   WorkerConfig,
   WorkerConfigMap,
   WorkerDataParam,
@@ -424,6 +425,125 @@ class MainWorkerFactory<
       failed: errors.length,
       errors,
     };
+  }
+
+  /**
+   * Runs a chain of workers where each step's output feeds directly into the
+   * next step — **without passing through the main thread**.
+   *
+   * Internally, adjacent workers are connected via `MessageChannel` ports.
+   * Only the final result is sent back to the main thread, minimising
+   * serialisation overhead for large intermediate data.
+   *
+   * @param steps - An ordered array of pipeline steps. The first step must
+   *   include `srcData`; subsequent steps receive the previous step's output.
+   *
+   * @returns A promise that resolves with the final step's output.
+   *
+   * @example
+   * const result = await foreman.pipeline([
+   *   { worker: 'fetchPosts', srcData: { url: '/api/posts' } },
+   *   { worker: 'transformPosts' },
+   *   { worker: 'filterPosts' },
+   * ]);
+   * console.log(result); // final transformed + filtered data
+   */
+  async pipeline<TResult = unknown>(steps: PipelineStep[]): Promise<TResult> {
+    if (steps.length === 0) {
+      throw new Error('Pipeline requires at least one step');
+    }
+
+    if (steps.length === 1) {
+      const step = steps[0];
+      const config = this.findWorkerByName(step.worker);
+      if (!config) throw new Error(`Worker "${step.worker}" not found`);
+      const worker = this.initWorker(config.func);
+      const raw = worker.getWorker;
+
+      return new Promise<TResult>((resolve, reject) => {
+        raw.onmessage = (e) => {
+          raw.terminate();
+          if (e.data?.ok === false) reject(new Error(e.data.error));
+          else resolve(e.data?.data as TResult);
+        };
+        raw.onerror = (e) => {
+          raw.terminate();
+          reject(e);
+        };
+        const payload = step.srcData ?? {};
+        raw.postMessage(
+          { data: payload, index: 0 },
+          extractTransferables(payload),
+        );
+      });
+    }
+
+    // Build the pipeline: connect workers via MessageChannels
+    return new Promise<TResult>((resolve, reject) => {
+      const workers: Worker[] = [];
+      const channels: MessageChannel[] = [];
+
+      // Create all workers
+      for (const step of steps) {
+        const config = this.findWorkerByName(step.worker);
+        if (!config) {
+          reject(new Error(`Worker "${step.worker}" not found`));
+          return;
+        }
+        const factory = new WorkerFactory(config.func, { pipeline: true });
+        workers.push(factory.getWorker);
+      }
+
+      // Create channels between adjacent workers
+      for (let i = 0; i < workers.length - 1; i++) {
+        channels.push(new MessageChannel());
+      }
+
+      // Wire up: each worker (except last) gets an output port
+      // Each worker (except first) gets an input port
+      for (let i = 0; i < workers.length; i++) {
+        const transferList: Transferable[] = [];
+        const ports: { inputPort?: MessagePort; outputPort?: MessagePort } = {};
+
+        if (i > 0) {
+          // Receive input from previous worker's channel
+          ports.inputPort = channels[i - 1].port1;
+          transferList.push(ports.inputPort);
+        }
+
+        if (i < workers.length - 1) {
+          // Send output to next worker's channel
+          ports.outputPort = channels[i].port2;
+          transferList.push(ports.outputPort);
+        }
+
+        // Send ports to the worker for pipeline wiring
+        workers[i].postMessage(
+          { __pipeline_ports__: true, ...ports },
+          transferList,
+        );
+      }
+
+      // Listen for the final worker's result
+      const lastWorker = workers[workers.length - 1];
+      lastWorker.onmessage = (e) => {
+        // Terminate all workers
+        workers.forEach((w) => w.terminate());
+        if (e.data?.ok === false) reject(new Error(e.data.error));
+        else resolve(e.data?.data as TResult);
+      };
+      lastWorker.onerror = (e) => {
+        workers.forEach((w) => w.terminate());
+        reject(e);
+      };
+
+      // Kick off the first worker with srcData
+      const firstPayload = steps[0].srcData ?? {};
+      workers[0].postMessage(
+        { data: firstPayload, index: 0 },
+        extractTransferables(firstPayload),
+      );
+    });
   }
 }
 

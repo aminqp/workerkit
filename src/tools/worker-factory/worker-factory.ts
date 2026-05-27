@@ -41,6 +41,95 @@ self.addEventListener('message', async (event) => {
 `;
 
 /**
+ * Generates a pipeline-aware worker script.
+ *
+ * This worker can:
+ * - Receive pipeline port configuration via a `__pipeline_ports__` message
+ * - Listen for input on an `inputPort` (from previous worker) or via `self`
+ * - Forward output to an `outputPort` (to next worker) or back to main thread
+ *
+ * @param func - The stringified worker function (via `.toString()`).
+ */
+const pipelineWorkerTemplate = (func: string) => `
+const extractTransferables = (value, seen = new Set()) => {
+  if (value === null || typeof value !== 'object') return [];
+  if (seen.has(value)) return [];
+  seen.add(value);
+  if (value instanceof ArrayBuffer || value instanceof MessagePort ||
+      (typeof ImageBitmap !== 'undefined' && value instanceof ImageBitmap) ||
+      (typeof OffscreenCanvas !== 'undefined' && value instanceof OffscreenCanvas)) {
+    return [value];
+  }
+  if (ArrayBuffer.isView(value)) return [value.buffer];
+  if (Array.isArray(value)) return value.flatMap(i => extractTransferables(i, seen));
+  return Object.values(value).flatMap(v => extractTransferables(v, seen));
+};
+
+const workerFn = ${func};
+let outputPort = null;
+let inputPort = null;
+let pendingData = null;
+
+async function processData(data) {
+  try {
+    const output = await workerFn(data);
+    const result = { ok: true, data: output };
+    const transfers = extractTransferables(output);
+    if (outputPort) {
+      outputPort.postMessage(result, transfers);
+    } else {
+      self.postMessage(result, transfers);
+    }
+  } catch (err) {
+    const result = { ok: false, error: err instanceof Error ? err.message : String(err) };
+    if (outputPort) {
+      outputPort.postMessage(result);
+    } else {
+      self.postMessage(result);
+    }
+  }
+}
+
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.__pipeline_ports__) {
+    if (event.data.outputPort) {
+      outputPort = event.data.outputPort;
+    }
+    if (event.data.inputPort) {
+      inputPort = event.data.inputPort;
+      inputPort.onmessage = (e) => {
+        if (e.data && e.data.ok === false) {
+          // Propagate errors through the pipeline
+          if (outputPort) outputPort.postMessage(e.data);
+          else self.postMessage(e.data);
+        } else {
+          processData({ data: e.data.data, index: 0 });
+        }
+      };
+    }
+    // If we already received data before ports, process it now
+    if (pendingData !== null) {
+      processData(pendingData);
+      pendingData = null;
+    }
+    return;
+  }
+  // First worker in pipeline or standalone — process directly
+  if (!inputPort) {
+    processData(event.data);
+  } else {
+    // Store data until ports are configured
+    pendingData = event.data;
+  }
+});
+`;
+
+export interface WorkerFactoryOptions {
+  /** When true, generates a pipeline-aware worker that supports MessagePort forwarding */
+  pipeline?: boolean;
+}
+
+/**
  * Low-level factory that serialises a {@link WorkerFunction} into a Blob URL
  * and spawns a native `Worker` from it.
  *
@@ -63,9 +152,14 @@ class WorkerFactory {
    * @param workerFunction - The function to run inside the worker thread.
    *   Must be self-contained — it cannot reference variables from the outer
    *   scope because it is serialised via `.toString()`.
+   * @param options - Optional configuration. Set `pipeline: true` for
+   *   pipeline-aware workers that support MessagePort forwarding.
    */
-  constructor(workerFunction: WorkerFunction) {
-    const workerCode: string = workerTemplate(workerFunction.toString());
+  constructor(workerFunction: WorkerFunction, options?: WorkerFactoryOptions) {
+    const template = options?.pipeline
+      ? pipelineWorkerTemplate
+      : workerTemplate;
+    const workerCode: string = template(workerFunction.toString());
     const workerBlob = new Blob([workerCode], {
       type: 'application/javascript',
     });

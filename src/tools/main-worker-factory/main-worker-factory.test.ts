@@ -428,3 +428,210 @@ describe('runWorker – edge cases', () => {
     expect(indices).toEqual([0, 1, 2]);
   });
 });
+
+// ── pipeline ────────────────────────────────────────────────────────────────
+
+describe('pipeline', () => {
+  it('throws when no steps are provided', async () => {
+    const factory = makeFactory([{ name: 'w1', role: 'compute', func: noop }]);
+
+    await expect(factory.pipeline([])).rejects.toThrow(
+      'Pipeline requires at least one step',
+    );
+  });
+
+  it('throws when a worker name is not found', async () => {
+    const factory = makeFactory([{ name: 'w1', role: 'compute', func: noop }]);
+
+    await expect(
+      factory.pipeline([{ worker: 'nonexistent', srcData: {} }]),
+    ).rejects.toThrow('Worker "nonexistent" not found');
+  });
+
+  it('resolves with result for a single-step pipeline', async () => {
+    const factory = makeFactory([{ name: 'w1', role: 'compute', func: noop }]);
+
+    const promise = factory.pipeline([{ worker: 'w1', srcData: { x: 1 } }]);
+
+    await Promise.resolve();
+    workerInstances[0].onmessage?.(
+      new MessageEvent('message', { data: { ok: true, data: { result: 42 } } }),
+    );
+
+    const result = await promise;
+    expect(result).toEqual({ result: 42 });
+  });
+
+  it('creates one worker per pipeline step', async () => {
+    const factory = makeFactory([
+      { name: 'generate', role: 'compute', func: noop },
+      { name: 'transform', role: 'compute', func: noop },
+      { name: 'aggregate', role: 'compute', func: noop },
+    ]);
+
+    const promise = factory.pipeline([
+      { worker: 'generate', srcData: { count: 10 } },
+      { worker: 'transform' },
+      { worker: 'aggregate' },
+    ]);
+
+    await Promise.resolve();
+    expect(workerInstances).toHaveLength(3);
+
+    // Pipeline's onmessage expects { ok: true, data: ... }
+    workerInstances[2].onmessage?.(
+      new MessageEvent('message', { data: { ok: true, data: { total: 100 } } }),
+    );
+
+    const result = await promise;
+    expect(result).toEqual({ total: 100 });
+  });
+
+  it('sends srcData to the first worker', async () => {
+    const factory = makeFactory([
+      { name: 'w1', role: 'compute', func: noop },
+      { name: 'w2', role: 'compute', func: noop },
+    ]);
+
+    const promise = factory.pipeline([
+      { worker: 'w1', srcData: { count: 50 } },
+      { worker: 'w2' },
+    ]);
+
+    await Promise.resolve();
+
+    const firstWorkerCalls = workerInstances[0].postMessage.mock.calls;
+    const dataMessage = firstWorkerCalls.find(
+      (call) => !call[0]?.__pipeline_ports__,
+    );
+    expect(dataMessage).toBeDefined();
+    expect(dataMessage![0]).toMatchObject({ data: { count: 50 } });
+
+    workerInstances[1].onmessage?.(
+      new MessageEvent('message', { data: { ok: true, data: 'done' } }),
+    );
+    await promise;
+  });
+
+  it('sends pipeline port configuration to workers', async () => {
+    const factory = makeFactory([
+      { name: 'w1', role: 'compute', func: noop },
+      { name: 'w2', role: 'compute', func: noop },
+      { name: 'w3', role: 'compute', func: noop },
+    ]);
+
+    const promise = factory.pipeline([
+      { worker: 'w1', srcData: {} },
+      { worker: 'w2' },
+      { worker: 'w3' },
+    ]);
+
+    await Promise.resolve();
+
+    for (const worker of workerInstances) {
+      const portMessage = worker.postMessage.mock.calls.find(
+        (call) => call[0]?.__pipeline_ports__,
+      );
+      expect(portMessage).toBeDefined();
+    }
+
+    workerInstances[2].onmessage?.(
+      new MessageEvent('message', { data: { ok: true, data: 'final' } }),
+    );
+    await promise;
+  });
+
+  it('terminates all workers after pipeline completes', async () => {
+    const factory = makeFactory([
+      { name: 'w1', role: 'compute', func: noop },
+      { name: 'w2', role: 'compute', func: noop },
+    ]);
+
+    const promise = factory.pipeline([
+      { worker: 'w1', srcData: {} },
+      { worker: 'w2' },
+    ]);
+
+    await Promise.resolve();
+    workerInstances[1].onmessage?.(
+      new MessageEvent('message', { data: { ok: true, data: 'result' } }),
+    );
+
+    await promise;
+
+    workerInstances.forEach((w) => {
+      expect(w.terminate).toHaveBeenCalled();
+    });
+  });
+
+  it('rejects and terminates all workers on error from last worker', async () => {
+    const factory = makeFactory([
+      { name: 'w1', role: 'compute', func: noop },
+      { name: 'w2', role: 'compute', func: noop },
+    ]);
+
+    const promise = factory.pipeline([
+      { worker: 'w1', srcData: {} },
+      { worker: 'w2' },
+    ]);
+
+    await Promise.resolve();
+    workerInstances[1].onmessage?.(
+      new MessageEvent('message', {
+        data: { ok: false, error: 'transform failed' },
+      }),
+    );
+
+    await expect(promise).rejects.toThrow('transform failed');
+
+    workerInstances.forEach((w) => {
+      expect(w.terminate).toHaveBeenCalled();
+    });
+  });
+
+  it('rejects on onerror from last worker', async () => {
+    const factory = makeFactory([
+      { name: 'w1', role: 'compute', func: noop },
+      { name: 'w2', role: 'compute', func: noop },
+    ]);
+
+    const promise = factory.pipeline([
+      { worker: 'w1', srcData: {} },
+      { worker: 'w2' },
+    ]);
+
+    await Promise.resolve();
+    const lastWorker = workerInstances[1];
+    lastWorker.onerror?.(new ErrorEvent('error', { message: 'crash' }));
+
+    await expect(promise).rejects.toBeDefined();
+  });
+
+  it('handles typed generic result', async () => {
+    interface Summary {
+      total: number;
+      avg: number;
+    }
+
+    const factory = makeFactory([
+      { name: 'w1', role: 'compute', func: noop },
+      { name: 'w2', role: 'compute', func: noop },
+    ]);
+
+    const promise = factory.pipeline<Summary>([
+      { worker: 'w1', srcData: { items: [1, 2, 3] } },
+      { worker: 'w2' },
+    ]);
+
+    await Promise.resolve();
+    workerInstances[1].onmessage?.(
+      new MessageEvent('message', {
+        data: { ok: true, data: { total: 6, avg: 2 } },
+      }),
+    );
+
+    const result = await promise;
+    expect(result.total).toBe(6);
+    expect(result.avg).toBe(2);
+  });
+});
