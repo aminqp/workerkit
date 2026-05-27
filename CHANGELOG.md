@@ -1,5 +1,11 @@
 # Changelog
 
+# [0.10.0](https://github.com/aminqp/workerkit/compare/v0.9.2...v0.10.0) (2026-05-27)
+
+### Features
+
+- **pipeline:** add worker-to-worker pipeline with MessageChannel support ([2344607](https://github.com/aminqp/workerkit/commit/2344607be687b77037fafe28ec728539eb2913c7))
+
 ## [0.9.2](https://github.com/aminqp/workerkit/compare/v0.9.1...v0.9.2) (2026-05-27)
 
 ## [0.9.1](https://github.com/aminqp/workerkit/compare/v0.9.0...v0.9.1) (2026-05-27)
