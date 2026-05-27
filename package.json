@@ -28,11 +28,11 @@
     "lint": "eslint --fix .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "release:patch": "npm version patch && npm run release:publish",
-    "release:minor": "npm version minor && npm run release:publish",
-    "release:major": "npm version major && npm run release:publish",
-    "release:publish": "npm run build:lib && npm publish",
-    "prepublishOnly": "npm run build:lib",
+    "release": "release-it --ci",
+    "release:patch": "release-it --increment patch --ci",
+    "release:minor": "release-it --increment minor --ci",
+    "release:major": "release-it --increment major --ci",
+    "release:dry": "release-it --dry-run",
     "lint-staged": "lint-staged",
     "prepare": "husky"
   },
@@ -59,6 +59,7 @@
     ]
   },
   "devDependencies": {
+    "@release-it/conventional-changelog": "11.0.0",
     "@typescript-eslint/eslint-plugin": "^8.58.2",
     "@typescript-eslint/parser": "^8.58.2",
     "date-fns": "^4.1.0",
@@ -71,6 +72,7 @@
     "jsdom": "^24.0.0",
     "lint-staged": "^16.4.0",
     "prettier": "^3.4.2",
+    "release-it": "19.0.3",
     "typescript": "^5.7.2",
     "vite": "^6.3.3",
     "vite-plugin-dts": "^4.5.4",
