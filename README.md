@@ -154,6 +154,110 @@ console.log(result); // only this small result crossed to main thread
 
 ---
 
+## Persistent Workers
+
+Keep a worker alive with a cached dataset, then re-run it with different configs without re-sending the data.
+
+### Why use persistent workers?
+
+In a typical workflow where you apply multiple transformations to the same dataset, the standard `runWorker` approach re-serializes the entire dataset on every call:
+
+```
+Call 1: Main ──[200k items]──→ Worker → Main
+Call 2: Main ──[200k items]──→ Worker → Main   ← same data, different config
+Call 3: Main ──[200k items]──→ Worker → Main   ← same data again
+```
+
+With 5 config variations on a 1.6 MB dataset, that's ~8 MB of redundant serialization. Persistent workers eliminate this by caching the dataset inside the worker:
+
+```
+Call 1: Main ──[200k items + config]──→ Worker → Main   ← dataset cached
+Call 2: Main ──[config only]──────────→ Worker → Main   ← reuses cache
+Call 3: Main ──[config only]──────────→ Worker → Main   ← reuses cache
+```
+
+Only the first call transfers the dataset. Subsequent calls send just the config object (typically a few bytes), saving both serialization time and memory pressure.
+
+### Usage
+
+```ts
+import { MainWorkerFactory } from '@offmain/workerkit';
+import { transformArray } from './transform.worker.ts';
+
+const factory = new MainWorkerFactory({
+  workers: [
+    { name: 'transform', role: 'computation', func: transformArray },
+  ] as const,
+});
+
+// First call: send dataset + config (dataset gets cached in worker memory)
+const r1 = await factory.runPersistent('transform', {
+  dataset: largeArray,
+  config: { multiplier: 2, filter: 'even' },
+});
+
+// Subsequent calls: only config — dataset is reused from cache
+const r2 = await factory.runPersistent('transform', {
+  config: { multiplier: 5, filter: 'odd' },
+});
+
+const r3 = await factory.runPersistent('transform', {
+  config: { multiplier: 1, filter: 'none', limit: 1000 },
+});
+
+// Update the dataset when it changes
+const r4 = await factory.runPersistent('transform', {
+  dataset: newArray, // replaces cached dataset
+  config: { multiplier: 3, filter: 'even' },
+});
+
+// Release the worker when done — frees memory
+factory.release('transform');
+```
+
+### How the worker function receives data
+
+The worker function signature stays the same as a regular worker — it receives `{ data, config }`:
+
+```ts
+// transform.worker.ts
+export function transformArray({
+  data,
+  config,
+}: {
+  data: number[];
+  config: { multiplier: number; filter: string };
+}) {
+  return data
+    .filter((n) => /* apply filter */)
+    .map((n) => n * config.multiplier);
+}
+```
+
+The framework handles the caching transparently — your function always receives the full `data` (from cache or freshly provided) plus the current `config`.
+
+### When to use persistent vs runWorker
+
+| Scenario                                               | Use             |
+| ------------------------------------------------------ | --------------- |
+| One-off computation                                    | `runWorker`     |
+| Same dataset, multiple config variations               | `runPersistent` |
+| Interactive UI where user tweaks params on static data | `runPersistent` |
+| Dataset changes frequently                             | `runWorker`     |
+| Need partitioning across multiple threads              | `runWorker`     |
+
+### Memory management
+
+The cached dataset lives in worker memory until `release()` is called. For large datasets, always call `release()` when you're done to free the memory:
+
+```ts
+factory.release('transform');
+```
+
+After releasing, the next `runPersistent` call will create a fresh worker instance (requiring a new dataset).
+
+---
+
 ## ESLint Plugin
 
 The package ships with two ESLint rules to catch common worker mistakes at lint time.

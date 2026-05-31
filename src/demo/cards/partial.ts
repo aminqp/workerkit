@@ -1,0 +1,58 @@
+import { setRunning, setStatus, setError, setResult } from '../ui-helpers';
+import type { Foreman } from '../ui-helpers';
+
+interface SearchResult {
+  score: number;
+  title: string;
+}
+
+export function initPartialCard(foreman: Foreman) {
+  document.getElementById('btn-partial')!.onclick = async () => {
+    const btn = document.getElementById('btn-partial') as HTMLButtonElement;
+    setRunning('partial', btn);
+    try {
+      const genRes = await foreman.runWorker('generateSearchShards', {
+        srcData: { shardCount: 8, query: 'web workers', failEvery: 3 },
+      });
+      const { data: shards } = await foreman.collectResults(genRes);
+      setStatus(
+        'partial',
+        'running',
+        `querying ${shards.length} search shards…`,
+      );
+
+      const shardRes = await foreman.runWorker('searchShard', {
+        srcData: shards,
+      });
+
+      // merge + rank off the main thread via custom reducer
+      setStatus('partial', 'running', 'ranking results…');
+      const {
+        data: allResults,
+        succeeded,
+        failed,
+      } = await foreman.collectResults(shardRes, {
+        reducer: (shards: SearchResult[][]) =>
+          shards.flat().sort((a, b) => b.score - a.score),
+      });
+
+      const statusText = `${succeeded} shards OK, ${failed} failed — showing partial results`;
+      document.getElementById('status-partial')!.className =
+        'card-status partial';
+      document.getElementById('status-partial')!.textContent = statusText;
+      btn.disabled = false;
+
+      const lines = [
+        statusText,
+        '',
+        `Top results (${(allResults as SearchResult[]).length} total from ${succeeded} shards):`,
+        ...(allResults as SearchResult[])
+          .slice(0, 6)
+          .map((r) => `  [${r.score.toFixed(3)}] ${r.title}`),
+      ];
+      setResult('partial', lines.join('\n'));
+    } catch (e) {
+      setError('partial', btn, e);
+    }
+  };
+}

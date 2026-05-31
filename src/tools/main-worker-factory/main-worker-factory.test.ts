@@ -21,6 +21,11 @@ const workerInstances: RawWorkerMock[] = [];
 
 vi.mock('../worker-factory/worker-factory', () => {
   return {
+    WorkerMode: {
+      Default: 'default',
+      Pipeline: 'pipeline',
+      Persistent: 'persistent',
+    },
     default: class MockWorkerFactory {
       _worker: RawWorkerMock;
       constructor() {
@@ -633,5 +638,213 @@ describe('pipeline', () => {
     const result = await promise;
     expect(result.total).toBe(6);
     expect(result.avg).toBe(2);
+  });
+});
+
+// ── runPersistent ───────────────────────────────────────────────────────────
+
+describe('runPersistent', () => {
+  it('throws when worker name is not found', async () => {
+    const factory = makeFactory([]);
+    await expect(
+      factory.runPersistent('unknown', { config: {} }),
+    ).rejects.toThrow('Worker "unknown" not found');
+  });
+
+  it('resolves with result on first call with dataset + config', async () => {
+    const factory = makeFactory([{ name: 'w1', role: 'compute', func: noop }]);
+
+    const promise = factory.runPersistent('w1', {
+      dataset: [1, 2, 3],
+      config: { multiplier: 2 },
+    });
+
+    await Promise.resolve();
+    // Persistent worker receives { type: 'run', dataset, config }
+    workerInstances[0].onmessage?.(
+      new MessageEvent('message', { data: { ok: true, data: { sum: 12 } } }),
+    );
+
+    const result = await promise;
+    expect(result).toEqual({ sum: 12 });
+  });
+
+  it('sends dataset on first call', async () => {
+    const factory = makeFactory([{ name: 'w1', role: 'compute', func: noop }]);
+
+    const promise = factory.runPersistent('w1', {
+      dataset: [10, 20],
+      config: { x: 1 },
+    });
+
+    await Promise.resolve();
+
+    const msg = workerInstances[0].postMessage.mock.calls[0][0];
+    expect(msg.type).toBe('run');
+    expect(msg.dataset).toEqual([10, 20]);
+    expect(msg.config).toEqual({ x: 1 });
+
+    workerInstances[0].onmessage?.(
+      new MessageEvent('message', { data: { ok: true, data: 'ok' } }),
+    );
+    await promise;
+  });
+
+  it('does not send dataset on subsequent config-only calls', async () => {
+    const factory = makeFactory([{ name: 'w1', role: 'compute', func: noop }]);
+
+    // First call with dataset
+    const p1 = factory.runPersistent('w1', {
+      dataset: [1, 2, 3],
+      config: { a: 1 },
+    });
+    await Promise.resolve();
+    workerInstances[0].onmessage?.(
+      new MessageEvent('message', { data: { ok: true, data: 'r1' } }),
+    );
+    await p1;
+
+    // Second call without dataset
+    const p2 = factory.runPersistent('w1', { config: { a: 2 } });
+    await Promise.resolve();
+
+    const msg = workerInstances[0].postMessage.mock.calls[1][0];
+    expect(msg.type).toBe('run');
+    expect(msg.dataset).toBeUndefined();
+    expect(msg.config).toEqual({ a: 2 });
+
+    workerInstances[0].onmessage?.(
+      new MessageEvent('message', { data: { ok: true, data: 'r2' } }),
+    );
+    const result = await p2;
+    expect(result).toBe('r2');
+  });
+
+  it('reuses the same worker instance across calls', async () => {
+    const factory = makeFactory([{ name: 'w1', role: 'compute', func: noop }]);
+
+    const p1 = factory.runPersistent('w1', {
+      dataset: [1],
+      config: {},
+    });
+    await Promise.resolve();
+    workerInstances[0].onmessage?.(
+      new MessageEvent('message', { data: { ok: true, data: 'a' } }),
+    );
+    await p1;
+
+    const p2 = factory.runPersistent('w1', { config: {} });
+    await Promise.resolve();
+    workerInstances[0].onmessage?.(
+      new MessageEvent('message', { data: { ok: true, data: 'b' } }),
+    );
+    await p2;
+
+    // Only one worker instance should have been created
+    expect(workerInstances).toHaveLength(1);
+  });
+
+  it('rejects when worker responds with ok: false', async () => {
+    const factory = makeFactory([{ name: 'w1', role: 'compute', func: noop }]);
+
+    const promise = factory.runPersistent('w1', {
+      dataset: [],
+      config: {},
+    });
+
+    await Promise.resolve();
+    workerInstances[0].onmessage?.(
+      new MessageEvent('message', {
+        data: {
+          ok: false,
+          error: 'No dataset cached. Provide a dataset on the first call.',
+        },
+      }),
+    );
+
+    await expect(promise).rejects.toThrow('No dataset cached');
+  });
+
+  it('rejects on onerror', async () => {
+    const factory = makeFactory([{ name: 'w1', role: 'compute', func: noop }]);
+
+    const promise = factory.runPersistent('w1', {
+      dataset: [1],
+      config: {},
+    });
+
+    await Promise.resolve();
+    workerInstances[0].onerror?.(new ErrorEvent('error', { message: 'crash' }));
+
+    await expect(promise).rejects.toBeDefined();
+  });
+});
+
+// ── release ─────────────────────────────────────────────────────────────────
+
+describe('release', () => {
+  it('terminates the persistent worker', async () => {
+    const factory = makeFactory([{ name: 'w1', role: 'compute', func: noop }]);
+
+    const p = factory.runPersistent('w1', { dataset: [1], config: {} });
+    await Promise.resolve();
+    workerInstances[0].onmessage?.(
+      new MessageEvent('message', { data: { ok: true, data: 'done' } }),
+    );
+    await p;
+
+    factory.release('w1');
+
+    expect(workerInstances[0].terminate).toHaveBeenCalled();
+  });
+
+  it('sends release message before terminating', async () => {
+    const factory = makeFactory([{ name: 'w1', role: 'compute', func: noop }]);
+
+    const p = factory.runPersistent('w1', { dataset: [1], config: {} });
+    await Promise.resolve();
+    workerInstances[0].onmessage?.(
+      new MessageEvent('message', { data: { ok: true, data: 'done' } }),
+    );
+    await p;
+
+    factory.release('w1');
+
+    const releaseMsg = workerInstances[0].postMessage.mock.calls.find(
+      (call) => call[0]?.type === 'release',
+    );
+    expect(releaseMsg).toBeDefined();
+  });
+
+  it('creates a new worker after release + re-run', async () => {
+    const factory = makeFactory([{ name: 'w1', role: 'compute', func: noop }]);
+
+    // First session
+    const p1 = factory.runPersistent('w1', { dataset: [1], config: {} });
+    await Promise.resolve();
+    workerInstances[0].onmessage?.(
+      new MessageEvent('message', { data: { ok: true, data: 'a' } }),
+    );
+    await p1;
+
+    factory.release('w1');
+    expect(workerInstances).toHaveLength(1);
+
+    // Second session — should create a new worker
+    const p2 = factory.runPersistent('w1', { dataset: [2], config: {} });
+    await Promise.resolve();
+    expect(workerInstances).toHaveLength(2);
+
+    workerInstances[1].onmessage?.(
+      new MessageEvent('message', { data: { ok: true, data: 'b' } }),
+    );
+    const result = await p2;
+    expect(result).toBe('b');
+  });
+
+  it('does nothing when releasing a non-existent worker', () => {
+    const factory = makeFactory([]);
+    // Should not throw
+    expect(() => factory.release('nonexistent')).not.toThrow();
   });
 });

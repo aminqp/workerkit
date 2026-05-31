@@ -12,6 +12,7 @@ import {
   TypedSettledResults,
 } from './types.ts';
 import { WorkerFactory } from '../worker-factory';
+import { WorkerMode } from '../worker-factory/worker-factory';
 
 /**
  * Recursively collects all Transferable objects from a value.
@@ -55,6 +56,13 @@ export function extractTransferables(
  * handles the full lifecycle of each worker: spawning, partitioning input
  * data across threads, retrying on failure, and collecting results.
  *
+ * Also supports:
+ * - **Pipelines** — chain workers via `MessageChannel` so intermediate data
+ *   never crosses back to the main thread ({@link pipeline}).
+ * - **Persistent workers** — keep a worker alive with a cached dataset,
+ *   re-running it with different configs without re-sending the data
+ *   ({@link runPersistent}, {@link release}).
+ *
  * @typeParam TConfigs - A readonly tuple of {@link WorkerConfig} objects that
  *   defines the set of available workers and their typed signatures.
  *
@@ -62,7 +70,7 @@ export function extractTransferables(
  * const foreman = new MainWorkerFactory({
  *   workers: [
  *     { name: 'sum', role: 'compute', func: sumWorker, partition: true },
- *   ],
+ *   ] as const,
  * });
  *
  * const settled = await foreman.runWorker('sum', { srcData: [1, 2, 3, 4] });
@@ -74,6 +82,7 @@ class MainWorkerFactory<
 > {
   private readonly _workers: WorkerConfig[];
   private readonly _threads: number;
+  private readonly _persistentWorkers: Map<string, Worker> = new Map();
 
   /**
    * Creates a new `MainWorkerFactory`.
@@ -435,13 +444,18 @@ class MainWorkerFactory<
    * Only the final result is sent back to the main thread, minimising
    * serialisation overhead for large intermediate data.
    *
-   * @param steps - An ordered array of pipeline steps. The first step must
-   *   include `srcData`; subsequent steps receive the previous step's output.
+   * @typeParam TResult - The expected type of the final pipeline output.
+   *   Defaults to `unknown` if not specified.
+   *
+   * @param steps - An ordered array of {@link PipelineStep} objects. The first
+   *   step must include `srcData`; subsequent steps receive the previous
+   *   step's output as `{ data: previousOutput, index: 0 }`.
    *
    * @returns A promise that resolves with the final step's output.
+   * @throws {Error} When `steps` is empty or a worker name is not found.
    *
    * @example
-   * const result = await foreman.pipeline([
+   * const result = await foreman.pipeline<FilteredPost[]>([
    *   { worker: 'fetchPosts', srcData: { url: '/api/posts' } },
    *   { worker: 'transformPosts' },
    *   { worker: 'filterPosts' },
@@ -490,7 +504,9 @@ class MainWorkerFactory<
           reject(new Error(`Worker "${step.worker}" not found`));
           return;
         }
-        const factory = new WorkerFactory(config.func, { pipeline: true });
+        const factory = new WorkerFactory(config.func, {
+          mode: WorkerMode.Pipeline,
+        });
         workers.push(factory.getWorker);
       }
 
@@ -544,6 +560,98 @@ class MainWorkerFactory<
         extractTransferables(firstPayload),
       );
     });
+  }
+
+  /**
+   * Runs a persistent worker that caches its dataset between calls.
+   *
+   * On the first call, provide both `dataset` and `config`. The worker stores
+   * the dataset in memory. On subsequent calls, only `config` is needed — the
+   * worker reuses the cached dataset and reprocesses it with the new config.
+   *
+   * The worker stays alive until {@link release} is called.
+   *
+   * @param workerName - Name of the registered worker.
+   * @param params - Object with optional `dataset` and required `config`.
+   * @returns The worker function's return value.
+   *
+   * @example
+   * // First call: send dataset + config
+   * const r1 = await factory.runPersistent('transform', {
+   *   dataset: largeArray,
+   *   config: { multiplier: 2 },
+   * });
+   *
+   * // Subsequent calls: only config, dataset is cached
+   * const r2 = await factory.runPersistent('transform', {
+   *   config: { multiplier: 5 },
+   * });
+   *
+   * // Update dataset when needed
+   * const r3 = await factory.runPersistent('transform', {
+   *   dataset: newArray,
+   *   config: { multiplier: 3 },
+   * });
+   *
+   * // Release when done
+   * factory.release('transform');
+   */
+  async runPersistent<TResult = unknown>(
+    workerName: string,
+    params: { dataset?: unknown; config: unknown },
+  ): Promise<TResult> {
+    const config = this.findWorkerByName(workerName);
+    if (!config) throw new Error(`Worker "${workerName}" not found`);
+
+    // Get or create the persistent worker
+    let raw = this._persistentWorkers.get(workerName);
+    if (!raw) {
+      const factory = new WorkerFactory(config.func, {
+        mode: WorkerMode.Persistent,
+      });
+      raw = factory.getWorker;
+      this._persistentWorkers.set(workerName, raw);
+    }
+
+    return new Promise<TResult>((resolve, reject) => {
+      raw!.onmessage = (e) => {
+        if (e.data?.ok === false) {
+          reject(new Error(e.data.error));
+        } else {
+          resolve(e.data?.data as TResult);
+        }
+      };
+      raw!.onerror = (e) => {
+        reject(e);
+      };
+
+      const message: { type: string; config: unknown; dataset?: unknown } = {
+        type: 'run',
+        config: params.config,
+      };
+      if (params.dataset !== undefined) {
+        message.dataset = params.dataset;
+      }
+      raw!.postMessage(message, extractTransferables(message));
+    });
+  }
+
+  /**
+   * Releases a persistent worker, freeing its cached dataset and terminating
+   * the thread.
+   *
+   * After calling `release`, subsequent `runPersistent` calls for this worker
+   * will create a fresh instance (requiring a new dataset).
+   *
+   * @param workerName - Name of the persistent worker to release.
+   */
+  release(workerName: string): void {
+    const raw = this._persistentWorkers.get(workerName);
+    if (raw) {
+      raw.postMessage({ type: 'release' });
+      raw.terminate();
+      this._persistentWorkers.delete(workerName);
+    }
   }
 }
 
