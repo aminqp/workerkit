@@ -1,5 +1,11 @@
 # Changelog
 
+# [0.11.0](https://github.com/aminqp/workerkit/compare/v0.10.0...v0.11.0) (2026-05-31)
+
+### Features
+
+- **persistent:** add persistent worker examples and benchmarks ([c339e06](https://github.com/aminqp/workerkit/commit/c339e069bea029cdd5cb2ed22b90b67290238c45))
+
 # [0.10.0](https://github.com/aminqp/workerkit/compare/v0.9.2...v0.10.0) (2026-05-27)
 
 ### Features
