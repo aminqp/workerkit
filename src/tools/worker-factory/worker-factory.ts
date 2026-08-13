@@ -206,6 +206,8 @@ export enum WorkerMode {
 export interface WorkerFactoryOptions {
   /** The worker execution mode. Defaults to `WorkerMode.Default`. */
   mode?: WorkerMode;
+  /** The worker instance to use instead of creating a worker from a function. */
+  workerInstance?: Worker;
   /** The worker URL to use instead of creating a worker from a function. */
   workerURL?: string | URL;
 }
@@ -253,7 +255,9 @@ class WorkerFactory {
    *   worker execution mode (default, pipeline, or persistent).
    */
   constructor(workerFunction?: WorkerFunction, options?: WorkerFactoryOptions) {
-    if (options?.workerURL) {
+    if (options?.workerInstance) {
+      this._worker = options.workerInstance;
+    } else if (options?.workerURL) {
       this._worker = new Worker(options.workerURL, { type: 'module' });
     } else if (workerFunction) {
       const mode = options?.mode ?? WorkerMode.Default;
