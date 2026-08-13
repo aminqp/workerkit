@@ -1,5 +1,11 @@
 # Changelog
 
+# [0.12.0](https://github.com/aminqp/workerkit/compare/v0.11.0...v0.12.0) (2026-08-13)
+
+### Features
+
+- **worker-factory:** allow `workerURL` option to accept `URL` instances ([e9f6cb9](https://github.com/aminqp/workerkit/commit/e9f6cb9fd01f159e7bb049cf3e5d2eca2c5bfe4f))
+
 # [0.11.0](https://github.com/aminqp/workerkit/compare/v0.10.0...v0.11.0) (2026-05-31)
 
 ### Features
