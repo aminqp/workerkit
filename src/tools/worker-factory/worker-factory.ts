@@ -2,7 +2,7 @@ import { WorkerFunction } from '../main-worker-factory/types';
 
 /**
  * Generates the source code for an inline worker script that wraps a
- * serialised user function.
+ * serialized user function.
  *
  * The generated script:
  * 1. Embeds a self-contained copy of `extractTransferables` so transferable
@@ -206,6 +206,8 @@ export enum WorkerMode {
 export interface WorkerFactoryOptions {
   /** The worker execution mode. Defaults to `WorkerMode.Default`. */
   mode?: WorkerMode;
+  /** The worker URL to use instead of creating a worker from a function. */
+  workerURL?: string | URL;
 }
 
 const TEMPLATES = Object.freeze({
@@ -215,7 +217,7 @@ const TEMPLATES = Object.freeze({
 });
 
 /**
- * Low-level factory that serialises a {@link WorkerFunction} into a Blob URL
+ * Low-level factory that serializes a {@link WorkerFunction} into a Blob URL
  * and spawns a native `Worker` from it.
  *
  * `WorkerFactory` is an internal building block used by `MainWorkerFactory`.
@@ -246,19 +248,27 @@ class WorkerFactory {
    *
    * @param workerFunction - The function to run inside the worker thread.
    *   Must be self-contained — it cannot reference variables from the outer
-   *   scope because it is serialised via `.toString()`.
+   *   scope because it is serialized via `.toString()`.
    * @param options - Optional configuration. Set `mode` to control the
    *   worker execution mode (default, pipeline, or persistent).
    */
-  constructor(workerFunction: WorkerFunction, options?: WorkerFactoryOptions) {
-    const mode = options?.mode ?? WorkerMode.Default;
+  constructor(workerFunction?: WorkerFunction, options?: WorkerFactoryOptions) {
+    if (options?.workerURL) {
+      this._worker = new Worker(options.workerURL, { type: 'module' });
+    } else if (workerFunction) {
+      const mode = options?.mode ?? WorkerMode.Default;
 
-    const workerCode: string = TEMPLATES[mode](workerFunction.toString());
-    const workerBlob = new Blob([workerCode], {
-      type: 'application/javascript',
-    });
+      const workerCode: string = TEMPLATES[mode](workerFunction.toString());
+      const workerBlob = new Blob([workerCode], {
+        type: 'application/javascript',
+      });
 
-    this._worker = new Worker(URL.createObjectURL(workerBlob));
+      this._worker = new Worker(URL.createObjectURL(workerBlob));
+    } else {
+      throw new Error(
+        'Either workerFunction or options.workerURL must be provided to WorkerFactory.',
+      );
+    }
   }
 
   /**

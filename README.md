@@ -57,14 +57,68 @@ console.log(data); // [15]
 
 ## WorkerConfig Options
 
-| Option           | Type       | Default                         | Description                                                                                         |
-| ---------------- | ---------- | ------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `name`           | `string`   | —                               | Unique identifier used to call the worker                                                           |
-| `role`           | `string`   | —                               | Logical grouping label                                                                              |
-| `func`           | `Function` | —                               | The exported worker function to run                                                                 |
-| `maxConcurrency` | `number`   | `navigator.hardwareConcurrency` | Max parallel worker instances — defaults to the number of logical CPU cores reported by the browser |
-| `retries`        | `number`   | `0`                             | How many times to retry a failed shard before marking it as rejected                                |
-| `partition`      | `boolean`  | `false`                         | Split array input across multiple workers automatically                                             |
+| Option           | Type            | Default                         | Description                                                                                         |
+| ---------------- | --------------- | ------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `name`           | `string`        | —                               | Unique identifier used to call the worker                                                           |
+| `role`           | `string`        | —                               | Logical grouping label                                                                              |
+| `func`           | `Function`      | —                               | The exported worker function to run (optional if `workerURL` is provided)                           |
+| `workerURL`      | `string \| URL` | —                               | Worker script URL or `new URL(..., import.meta.url)` for module bundlers                            |
+| `maxConcurrency` | `number`        | `navigator.hardwareConcurrency` | Max parallel worker instances — defaults to the number of logical CPU cores reported by the browser |
+| `retries`        | `number`        | `0`                             | How many times to retry a failed shard before marking it as rejected                                |
+| `partition`      | `boolean`       | `false`                         | Split array input across multiple workers automatically                                             |
+
+---
+
+## Module Bundler Integration (`workerURL`)
+
+When worker logic relies on external npm packages (such as Luxon, `date-fns`, `i18next`, or custom data transformation modules), dynamic inline stringification (`.toString()`) cannot access those closed-over imports.
+
+Passing `workerURL` enables modern module bundlers (Webpack 5, Vite, Rollup, Parcel) to analyze and bundle the worker file along with all of its dependencies into a dedicated ES module worker chunk.
+
+### Dedicated Worker Script
+
+```ts
+// transform-data.worker.ts
+import { format } from 'date-fns';
+import { t } from './i18n.ts';
+
+self.addEventListener('message', (event) => {
+  try {
+    const { items, locale } = event.data.data;
+    const result = items.map((item: any) => ({
+      ...item,
+      formattedDate: format(new Date(item.timestamp), 'yyyy-MM-dd'),
+      label: t('transaction', locale),
+    }));
+
+    self.postMessage({ ok: true, data: result });
+  } catch (err) {
+    self.postMessage({ ok: false, error: (err as Error).message });
+  }
+});
+```
+
+### Registering with `workerURL`
+
+```ts
+import { MainWorkerFactory } from '@offmain/workerkit';
+
+const factory = new MainWorkerFactory({
+  workers: [
+    {
+      name: 'transformData',
+      role: 'compute',
+      // Webpack 5 / Vite statically analyzes new URL(..., import.meta.url)
+      workerURL: new URL('./transform-data.worker.ts', import.meta.url),
+      maxConcurrency: 4,
+    },
+  ] as const,
+});
+
+const settled = await factory.runWorker('transformData', {
+  srcData: { locale: 'es', items: [{ timestamp: Date.now() }] },
+});
+```
 
 ---
 

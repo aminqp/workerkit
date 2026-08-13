@@ -23,7 +23,8 @@ export type CardId =
   | 'pipeline'
   | 'pipeline-bench'
   | 'persistent'
-  | 'persistent-bench';
+  | 'persistent-bench'
+  | 'bundler';
 
 export function setStatus(
   id: CardId,

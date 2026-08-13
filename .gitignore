@@ -26,3 +26,4 @@ dist-ssr
 .npmrc
 
 logs
+.pnpm-store/

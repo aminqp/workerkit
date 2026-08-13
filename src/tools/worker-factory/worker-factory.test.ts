@@ -23,10 +23,16 @@ const MockWorker = vi.fn(function (this: WorkerMock) {
 });
 
 vi.stubGlobal('Worker', MockWorker);
-vi.stubGlobal('URL', {
-  createObjectURL: vi.fn(() => 'blob:mock-url'),
-  revokeObjectURL: vi.fn(),
+
+const MockURL = vi.fn(function (url: string | URL) {
+  return { href: String(url), toString: () => String(url) };
 });
+(MockURL as unknown as Record<string, unknown>).createObjectURL = vi.fn(
+  () => 'blob:mock-url',
+);
+(MockURL as unknown as Record<string, unknown>).revokeObjectURL = vi.fn();
+
+vi.stubGlobal('URL', MockURL);
 
 // Capture the real Blob before we spy, so the spy doesn't recurse into itself
 const RealBlob = globalThis.Blob;
@@ -167,5 +173,25 @@ describe('WorkerFactory – edge cases', () => {
     const factory = new WorkerFactory(() => {});
     expect(factory._worker).toBeDefined();
     expect(factory._worker).toBe(workerInstances[0]);
+  });
+
+  it('creates a worker with workerURL string option', () => {
+    const url = 'http://localhost/my.worker.js';
+    new WorkerFactory(undefined, { workerURL: url });
+    expect(MockWorker).toHaveBeenCalledWith(url, { type: 'module' });
+    expect(URL.createObjectURL).not.toHaveBeenCalled();
+  });
+
+  it('creates a worker with workerURL URL object option', () => {
+    const urlObj = new URL('http://localhost/my.worker.js');
+    new WorkerFactory(undefined, { workerURL: urlObj });
+    expect(MockWorker).toHaveBeenCalledWith(urlObj, { type: 'module' });
+    expect(URL.createObjectURL).not.toHaveBeenCalled();
+  });
+
+  it('throws an error if neither workerFunction nor options.workerURL is provided', () => {
+    expect(() => new WorkerFactory()).toThrow(
+      'Either workerFunction or options.workerURL must be provided to WorkerFactory.',
+    );
   });
 });

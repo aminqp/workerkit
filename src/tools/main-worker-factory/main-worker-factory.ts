@@ -95,13 +95,15 @@ class MainWorkerFactory<
   }
 
   /**
-   * Instantiates a {@link WorkerFactory} for the given worker function.
+   * Instantiates a {@link WorkerFactory} for the given worker configuration.
    *
-   * @param workerFunction - The function to run inside the worker thread.
+   * @param config - The worker configuration containing `func` or `workerURL`.
    * @returns A new `WorkerFactory` wrapping the worker.
    */
-  private initWorker(workerFunction: WorkerFunction): WorkerFactory {
-    return new WorkerFactory(workerFunction);
+  private initWorker(config: WorkerConfig): WorkerFactory {
+    return new WorkerFactory(config.func, {
+      workerURL: config.workerURL,
+    });
   }
 
   /**
@@ -241,6 +243,7 @@ class MainWorkerFactory<
       return this.runWorkerWithRetry(
         {
           workerFunc: config.func,
+          workerURL: config.workerURL,
           workerName,
           index,
           data: { data, ...otherParams },
@@ -296,17 +299,23 @@ class MainWorkerFactory<
    * The underlying `Worker` is always terminated after the first message,
    * whether it succeeded or failed.
    *
-   * @param instanceConfig - Worker function, name, shard index, and data.
+   * @param instanceConfig - Worker function, URL, name, shard index, and data.
    * @returns A promise that resolves with the worker's result.
    */
   private initiateWorker({
     workerFunc,
+    workerURL,
     workerName,
     index,
     data,
   }: WorkerInstanceConfig): Promise<WorkerResult> {
     return new Promise((resolve, reject) => {
-      const worker = this.initWorker(workerFunc);
+      const worker = this.initWorker({
+        name: workerName,
+        role: '',
+        func: workerFunc,
+        workerURL,
+      });
       const raw = worker.getWorker;
 
       raw.onerror = (event) => {
@@ -471,7 +480,7 @@ class MainWorkerFactory<
       const step = steps[0];
       const config = this.findWorkerByName(step.worker);
       if (!config) throw new Error(`Worker "${step.worker}" not found`);
-      const worker = this.initWorker(config.func);
+      const worker = this.initWorker(config);
       const raw = worker.getWorker;
 
       return new Promise<TResult>((resolve, reject) => {
@@ -506,6 +515,7 @@ class MainWorkerFactory<
         }
         const factory = new WorkerFactory(config.func, {
           mode: WorkerMode.Pipeline,
+          workerURL: config.workerURL,
         });
         workers.push(factory.getWorker);
       }
@@ -608,6 +618,7 @@ class MainWorkerFactory<
     if (!raw) {
       const factory = new WorkerFactory(config.func, {
         mode: WorkerMode.Persistent,
+        workerURL: config.workerURL,
       });
       raw = factory.getWorker;
       this._persistentWorkers.set(workerName, raw);

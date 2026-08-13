@@ -29,8 +29,13 @@ export interface WorkerConfig<TFunc extends WorkerFunction = WorkerFunction> {
   name: WorkerName;
   /** Human-readable role label (e.g. `'compute'`, `'transform'`). */
   role: WorkerRole;
-  /** The worker function that will be serialised and run in a thread. */
-  func: TFunc;
+  /** The worker function that will be serialised and run in a thread. Optional if `workerURL` is provided. */
+  func?: TFunc;
+  /**
+   * The worker script URL (or `URL` object created via `new URL(..., import.meta.url)`).
+   * Enables module bundlers like Webpack 5, Vite, Rollup, and Parcel to bundle worker code and its dependencies.
+   */
+  workerURL?: string | URL;
   /**
    * Maximum number of parallel threads to spawn for this worker.
    * Defaults to `navigator.hardwareConcurrency` when omitted.
@@ -47,6 +52,11 @@ export interface WorkerConfig<TFunc extends WorkerFunction = WorkerFunction> {
    * array.
    */
   partition?: boolean;
+  /**
+   * A list of worker functions that must complete before this worker can start.
+   * If any dependency fails, this worker will not run.
+   */
+  dependencies?: Array<() => void>;
 }
 
 /**
@@ -62,7 +72,11 @@ export type WorkerConfigMap<
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   T extends readonly WorkerConfig<WorkerFunction<any, any>>[],
 > = {
-  [K in T[number]['name']]: Extract<T[number], { name: K }>['func'];
+  [K in T[number]['name']]: NonNullable<
+    Extract<T[number], { name: K }>['func']
+  > extends WorkerFunction
+    ? NonNullable<Extract<T[number], { name: K }>['func']>
+    : WorkerFunction;
 };
 
 /**
@@ -117,8 +131,10 @@ export interface WorkerInstanceConfig<
 > {
   /** Name of the parent worker config, used in logs and error objects. */
   workerName: WorkerName;
-  /** The function serialised and executed inside the thread. */
-  workerFunc: TFunc;
+  /** The function serialised and executed inside the thread (optional if `workerURL` is set). */
+  workerFunc?: TFunc;
+  /** Worker script URL (string or URL object). */
+  workerURL?: string | URL;
   /** Zero-based shard index assigned to this thread. */
   index: number;
   /** The data payload (full or partitioned shard) sent to the thread. */

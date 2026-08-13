@@ -193,6 +193,15 @@ const workerConfigs = [
     func: persistentTransform,
     maxConcurrency: 1,
   },
+  {
+    name: 'bundlerLuxonI18n',
+    role: 'transform',
+    workerURL: new URL(
+      './examples/bundler-luxon-i18n.worker.ts',
+      import.meta.url,
+    ),
+    maxConcurrency: 2,
+  },
 ] as const;
 
 const foreman = new MainWorkerFactory({ workers: workerConfigs });

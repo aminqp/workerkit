@@ -848,3 +848,82 @@ describe('release', () => {
     expect(() => factory.release('nonexistent')).not.toThrow();
   });
 });
+
+// ── workerURL support ───────────────────────────────────────────────────────
+
+describe('MainWorkerFactory – workerURL support', () => {
+  it('runs a worker configured with workerURL', async () => {
+    const factory = makeFactory([
+      {
+        name: 'urlWorker',
+        role: 'transform',
+        workerURL: 'http://localhost/my.worker.js',
+        maxConcurrency: 1,
+      },
+    ]);
+
+    const promise = factory.runWorker('urlWorker', { srcData: { test: 123 } });
+    await autoRespond({ data: 'url-result' });
+    const results = await promise;
+
+    expect(results.results).toHaveLength(1);
+    expect(results.results[0].status).toBe('fulfilled');
+  });
+
+  it('runs a pipeline with a step configured with workerURL', async () => {
+    const factory = makeFactory([
+      {
+        name: 'urlStep1',
+        role: 'compute',
+        workerURL: 'http://localhost/step1.worker.js',
+      },
+      {
+        name: 'urlStep2',
+        role: 'compute',
+        workerURL: 'http://localhost/step2.worker.js',
+      },
+    ]);
+
+    const promise = factory.pipeline([
+      { worker: 'urlStep1', srcData: { input: 1 } },
+      { worker: 'urlStep2' },
+    ]);
+
+    await Promise.resolve();
+    expect(workerInstances).toHaveLength(2);
+
+    workerInstances[1].onmessage?.(
+      new MessageEvent('message', {
+        data: { ok: true, data: 'pipeline-url-result' },
+      }),
+    );
+
+    const result = await promise;
+    expect(result).toBe('pipeline-url-result');
+  });
+
+  it('runs a persistent worker configured with workerURL', async () => {
+    const factory = makeFactory([
+      {
+        name: 'urlPersistent',
+        role: 'compute',
+        workerURL: 'http://localhost/persistent.worker.js',
+      },
+    ]);
+
+    const promise = factory.runPersistent('urlPersistent', {
+      dataset: [100, 200],
+      config: { multiplier: 2 },
+    });
+
+    await Promise.resolve();
+    expect(workerInstances).toHaveLength(1);
+
+    workerInstances[0].onmessage?.(
+      new MessageEvent('message', { data: { ok: true, data: { sum: 600 } } }),
+    );
+
+    const result = await promise;
+    expect(result).toEqual({ sum: 600 });
+  });
+});

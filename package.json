@@ -76,6 +76,9 @@
     "typescript": "^5.7.2",
     "vite": "^6.3.3",
     "vite-plugin-dts": "^4.5.4",
-    "vitest": "^1.0.0"
+    "vitest": "^1.0.0",
+    "luxon": "^3.7.2",
+    "i18next": "^25.5.1",
+    "@types/luxon": "^3.7.2"
   }
 }
