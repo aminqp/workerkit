@@ -457,19 +457,36 @@
 
         <div class="card">
           <div class="card-header">
-            <span class="card-tag">Bundler Worker (workerURL)</span>
+            <span class="card-tag">Bundler Worker (createWorker)</span>
             <h2 class="card-title">Module Bundler with Dependencies</h2>
             <p class="card-desc">
-              Executes a worker compiled from a dedicated module URL (using <code>workerURL: new URL(...)</code>) that imports external npm packages (<code>luxon</code> dates, <code>i18next</code> translations) and external application configs directly inside the worker thread.
+              Executes a worker compiled using <code>createWorker: () => new Worker(new URL(...))</code> that imports external npm packages (<code>luxon</code> dates, <code>i18next</code> translations) directly inside the worker thread.
             </p>
           </div>
           <div class="card-meta">
-            <span>Worker: <code>bundlerLuxonI18n</code> via <code>workerURL</code></span>
+            <span>Worker: <code>bundlerLuxonI18n</code> via <code>createWorker</code></span>
             <span>Imports: <code>luxon</code>, <code>i18next</code>, <code>i18n.config.ts</code></span>
           </div>
           <button id="btn-bundler" type="button" class="run-btn">Run</button>
           <div class="card-status" id="status-bundler">idle</div>
           <pre class="card-result" id="result-bundler"></pre>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <span class="card-tag">Custom Worker Factory (createWorker)</span>
+            <h2 class="card-title">Webpack 5 / Vite Worker Factory</h2>
+            <p class="card-desc">
+              Executes a worker using a factory function <code>createWorker: () => new Worker(...)</code> for static AST bundler analysis and multi-thread concurrency scaling.
+            </p>
+          </div>
+          <div class="card-meta">
+            <span>Worker: <code>webpackCreateWorker</code> via <code>createWorker</code></span>
+            <span>Pattern: <code>Static Analysis Factory</code></span>
+          </div>
+          <button id="btn-worker-instance" type="button" class="run-btn">Run</button>
+          <div class="card-status" id="status-worker-instance">idle</div>
+          <pre class="card-result" id="result-worker-instance"></pre>
         </div>
       </div>
     </main>

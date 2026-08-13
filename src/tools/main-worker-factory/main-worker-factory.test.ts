@@ -19,6 +19,23 @@ type RawWorkerMock = {
 
 const workerInstances: RawWorkerMock[] = [];
 
+function createMockWorker(): RawWorkerMock {
+  const mock: RawWorkerMock = {
+    postMessage: vi.fn(),
+    terminate: vi.fn(),
+    onmessage: null,
+    onerror: null,
+    respond(data: unknown) {
+      this.onmessage?.({ data } as MessageEvent);
+    },
+    fail(error: unknown = new Error('worker error')) {
+      this.onerror?.(error as ErrorEvent);
+    },
+  };
+  workerInstances.push(mock);
+  return mock;
+}
+
 vi.mock('../worker-factory/worker-factory', () => {
   return {
     WorkerMode: {
@@ -29,20 +46,7 @@ vi.mock('../worker-factory/worker-factory', () => {
     default: class MockWorkerFactory {
       _worker: RawWorkerMock;
       constructor() {
-        const mock: RawWorkerMock = {
-          postMessage: vi.fn(),
-          terminate: vi.fn(),
-          onmessage: null,
-          onerror: null,
-          respond(data: unknown) {
-            this.onmessage?.({ data } as MessageEvent);
-          },
-          fail(error: unknown = new Error('worker error')) {
-            this.onerror?.(error as ErrorEvent);
-          },
-        };
-        workerInstances.push(mock);
-        this._worker = mock;
+        this._worker = createMockWorker();
       }
       get getWorker() {
         return this._worker;
@@ -849,44 +853,46 @@ describe('release', () => {
   });
 });
 
-// ── workerURL support ───────────────────────────────────────────────────────
+// ── createWorker support ───────────────────────────────────────────────────
 
-describe('MainWorkerFactory – workerURL support', () => {
-  it('runs a worker configured with workerURL', async () => {
+describe('MainWorkerFactory – createWorker support', () => {
+  it('runs a worker configured with createWorker', async () => {
     const factory = makeFactory([
       {
-        name: 'urlWorker',
+        name: 'createWorkerSample',
         role: 'transform',
-        workerURL: 'http://localhost/my.worker.js',
+        createWorker: () => createMockWorker() as unknown as Worker,
         maxConcurrency: 1,
       },
     ]);
 
-    const promise = factory.runWorker('urlWorker', { srcData: { test: 123 } });
-    await autoRespond({ data: 'url-result' });
+    const promise = factory.runWorker('createWorkerSample', {
+      srcData: { test: 123 },
+    });
+    await autoRespond({ data: 'create-worker-result' });
     const results = await promise;
 
     expect(results.results).toHaveLength(1);
     expect(results.results[0].status).toBe('fulfilled');
   });
 
-  it('runs a pipeline with a step configured with workerURL', async () => {
+  it('runs a pipeline with a step configured with createWorker', async () => {
     const factory = makeFactory([
       {
-        name: 'urlStep1',
+        name: 'createStep1',
         role: 'compute',
-        workerURL: 'http://localhost/step1.worker.js',
+        createWorker: () => createMockWorker() as unknown as Worker,
       },
       {
-        name: 'urlStep2',
+        name: 'createStep2',
         role: 'compute',
-        workerURL: 'http://localhost/step2.worker.js',
+        createWorker: () => createMockWorker() as unknown as Worker,
       },
     ]);
 
     const promise = factory.pipeline([
-      { worker: 'urlStep1', srcData: { input: 1 } },
-      { worker: 'urlStep2' },
+      { worker: 'createStep1', srcData: { input: 1 } },
+      { worker: 'createStep2' },
     ]);
 
     await Promise.resolve();
@@ -894,24 +900,24 @@ describe('MainWorkerFactory – workerURL support', () => {
 
     workerInstances[1].onmessage?.(
       new MessageEvent('message', {
-        data: { ok: true, data: 'pipeline-url-result' },
+        data: { ok: true, data: 'pipeline-create-worker-result' },
       }),
     );
 
     const result = await promise;
-    expect(result).toBe('pipeline-url-result');
+    expect(result).toBe('pipeline-create-worker-result');
   });
 
-  it('runs a persistent worker configured with workerURL', async () => {
+  it('runs a persistent worker configured with createWorker', async () => {
     const factory = makeFactory([
       {
-        name: 'urlPersistent',
+        name: 'createPersistent',
         role: 'compute',
-        workerURL: 'http://localhost/persistent.worker.js',
+        createWorker: () => createMockWorker() as unknown as Worker,
       },
     ]);
 
-    const promise = factory.runPersistent('urlPersistent', {
+    const promise = factory.runPersistent('createPersistent', {
       dataset: [100, 200],
       config: { multiplier: 2 },
     });
@@ -925,5 +931,101 @@ describe('MainWorkerFactory – workerURL support', () => {
 
     const result = await promise;
     expect(result).toEqual({ sum: 600 });
+  });
+
+  describe('terminate & destroy', () => {
+    it('terminates all persistent and active workers', async () => {
+      const factory = makeFactory([
+        { name: 'w1', role: 'compute', func: noop },
+        { name: 'w2', role: 'compute', func: noop },
+      ]);
+
+      // Start a persistent worker
+      factory.runPersistent('w1', { config: {} });
+      await Promise.resolve();
+
+      expect(factory.isTerminated).toBe(false);
+
+      factory.terminate();
+
+      expect(factory.isTerminated).toBe(true);
+      workerInstances.forEach((w) => {
+        expect(w.terminate).toHaveBeenCalled();
+      });
+    });
+
+    it('supports destroy as an alias for terminate', async () => {
+      const factory = makeFactory([
+        { name: 'w1', role: 'compute', func: noop },
+      ]);
+
+      factory.runPersistent('w1', { config: {} });
+      await Promise.resolve();
+
+      factory.destroy();
+
+      expect(factory.isTerminated).toBe(true);
+      workerInstances.forEach((w) => {
+        expect(w.terminate).toHaveBeenCalled();
+      });
+    });
+
+    it('prevents running workers after termination', async () => {
+      const factory = makeFactory([
+        { name: 'w1', role: 'compute', func: noop },
+      ]);
+
+      factory.terminate();
+
+      await expect(
+        factory.runWorker('w1', { srcData: [1, 2, 3] }),
+      ).rejects.toThrow('MainWorkerFactory has been terminated');
+
+      await expect(
+        factory.pipeline([{ worker: 'w1', srcData: { a: 1 } }]),
+      ).rejects.toThrow('MainWorkerFactory has been terminated');
+
+      await expect(factory.runPersistent('w1', { config: {} })).rejects.toThrow(
+        'MainWorkerFactory has been terminated',
+      );
+
+      const dummySettled = new (
+        await import('./types')
+      ).TypedSettledResults<unknown>([]);
+      await expect(factory.collectResults(dummySettled)).rejects.toThrow(
+        'MainWorkerFactory has been terminated',
+      );
+    });
+
+    it('resets the factory so new worker instances can be initiated', async () => {
+      const factory = makeFactory([
+        { name: 'w1', role: 'compute', func: noop },
+      ]);
+
+      factory.runPersistent('w1', { config: {} });
+      await Promise.resolve();
+
+      factory.reset();
+
+      expect(factory.isTerminated).toBe(false);
+
+      const promise = factory.runWorker('w1', { srcData: { test: 1 } });
+      await autoRespond({ data: 'ok-after-reset' });
+      const res = await promise;
+
+      expect(res.results[0].status).toBe('fulfilled');
+    });
+
+    it('supports restart as an alias for reset', async () => {
+      const factory = makeFactory([
+        { name: 'w1', role: 'compute', func: noop },
+      ]);
+
+      factory.terminate();
+      expect(factory.isTerminated).toBe(true);
+
+      factory.restart();
+      expect(factory.isTerminated).toBe(false);
+    });
   });
 });

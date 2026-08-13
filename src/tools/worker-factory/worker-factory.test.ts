@@ -175,23 +175,20 @@ describe('WorkerFactory – edge cases', () => {
     expect(factory._worker).toBe(workerInstances[0]);
   });
 
-  it('creates a worker with workerURL string option', () => {
-    const url = 'http://localhost/my.worker.js';
-    new WorkerFactory(undefined, { workerURL: url });
-    expect(MockWorker).toHaveBeenCalledWith(url, { type: 'module' });
+  it('creates a worker with createWorker factory option', () => {
+    const customWorker = new MockWorker();
+    const createWorkerFn = vi.fn(() => customWorker as unknown as Worker);
+    const factory = new WorkerFactory(undefined, {
+      createWorker: createWorkerFn,
+    });
+    expect(createWorkerFn).toHaveBeenCalledTimes(1);
+    expect(factory.getWorker).toBe(customWorker);
     expect(URL.createObjectURL).not.toHaveBeenCalled();
   });
 
-  it('creates a worker with workerURL URL object option', () => {
-    const urlObj = new URL('http://localhost/my.worker.js');
-    new WorkerFactory(undefined, { workerURL: urlObj });
-    expect(MockWorker).toHaveBeenCalledWith(urlObj, { type: 'module' });
-    expect(URL.createObjectURL).not.toHaveBeenCalled();
-  });
-
-  it('throws an error if neither workerFunction nor options.workerURL is provided', () => {
+  it('throws an error if neither workerFunction nor options.createWorker is provided', () => {
     expect(() => new WorkerFactory()).toThrow(
-      'Either workerFunction or options.workerURL must be provided to WorkerFactory.',
+      'Either workerFunction or options.createWorker must be provided to WorkerFactory.',
     );
   });
 });

@@ -33,6 +33,7 @@ import {
   aggregateResults,
 } from './examples/pipeline-benchmark.worker.ts';
 import { persistentTransform } from './examples/persistent-transform.worker.ts';
+
 import { initDemo } from './demo';
 
 // --- worker setup ---
@@ -196,11 +197,29 @@ const workerConfigs = [
   {
     name: 'bundlerLuxonI18n',
     role: 'transform',
-    workerURL: new URL(
-      './examples/bundler-luxon-i18n.worker.ts',
-      import.meta.url,
-    ),
+    createWorker: () =>
+      new Worker(
+        new URL('./examples/bundler-luxon-i18n.worker.ts', import.meta.url),
+        { type: 'module' },
+      ),
     maxConcurrency: 2,
+  },
+  {
+    name: 'webpackCreateWorker',
+    role: 'computation',
+    // Factory function pattern for Webpack 5 / Vite static worker bundling + maxConcurrency scaling
+    createWorker: () =>
+      new Worker(
+        URL.createObjectURL(
+          new Blob(
+            [
+              `self.addEventListener('message', (e) => self.postMessage({ ok: true, data: 'Webpack worker output' }));`,
+            ],
+            { type: 'application/javascript' },
+          ),
+        ),
+      ),
+    maxConcurrency: 4,
   },
 ] as const;
 

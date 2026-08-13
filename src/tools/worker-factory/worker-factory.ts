@@ -206,10 +206,8 @@ export enum WorkerMode {
 export interface WorkerFactoryOptions {
   /** The worker execution mode. Defaults to `WorkerMode.Default`. */
   mode?: WorkerMode;
-  /** The worker instance to use instead of creating a worker from a function. */
-  workerInstance?: Worker;
-  /** The worker URL to use instead of creating a worker from a function. */
-  workerURL?: string | URL;
+  /** Factory function returning a native `Worker` instance. */
+  createWorker?: () => Worker;
 }
 
 const TEMPLATES = Object.freeze({
@@ -243,22 +241,16 @@ class WorkerFactory {
   readonly _worker: Worker;
 
   /**
-   * Creates a new `Worker` from the given function.
-   *
-   * The function is stringified, embedded into a self-contained worker script,
-   * converted to a `Blob` URL, and passed to the `Worker` constructor.
+   * Creates a new `Worker` from the given function or factory option.
    *
    * @param workerFunction - The function to run inside the worker thread.
    *   Must be self-contained — it cannot reference variables from the outer
    *   scope because it is serialized via `.toString()`.
-   * @param options - Optional configuration. Set `mode` to control the
-   *   worker execution mode (default, pipeline, or persistent).
+   * @param options - Optional configuration containing `createWorker` or `mode`.
    */
   constructor(workerFunction?: WorkerFunction, options?: WorkerFactoryOptions) {
-    if (options?.workerInstance) {
-      this._worker = options.workerInstance;
-    } else if (options?.workerURL) {
-      this._worker = new Worker(options.workerURL, { type: 'module' });
+    if (options?.createWorker) {
+      this._worker = options.createWorker();
     } else if (workerFunction) {
       const mode = options?.mode ?? WorkerMode.Default;
 
@@ -270,7 +262,7 @@ class WorkerFactory {
       this._worker = new Worker(URL.createObjectURL(workerBlob));
     } else {
       throw new Error(
-        'Either workerFunction or options.workerURL must be provided to WorkerFactory.',
+        'Either workerFunction or options.createWorker must be provided to WorkerFactory.',
       );
     }
   }

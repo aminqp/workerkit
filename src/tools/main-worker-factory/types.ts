@@ -29,13 +29,14 @@ export interface WorkerConfig<TFunc extends WorkerFunction = WorkerFunction> {
   name: WorkerName;
   /** Human-readable role label (e.g. `'compute'`, `'transform'`). */
   role: WorkerRole;
-  /** The worker function that will be serialised and run in a thread. Optional if `workerURL` is provided. */
+  /** The worker function that will be serialised and run in a thread. Optional if `createWorker` is provided. */
   func?: TFunc;
   /**
-   * The worker script URL (or `URL` object created via `new URL(..., import.meta.url)`).
-   * Enables module bundlers like Webpack 5, Vite, Rollup, and Parcel to bundle worker code and its dependencies.
+   * Factory function returning a native `Worker` instance (e.g. `() => new Worker(new URL('./worker.ts', import.meta.url))`).
+   * Enables bundlers like Webpack 5, Vite, Rollup, and Parcel to statically analyze and bundle worker code into individual chunks,
+   * while allowing `MainWorkerFactory` to scale concurrency and manage worker thread lifecycles.
    */
-  workerURL?: string | URL;
+  createWorker?: () => Worker;
   /**
    * Maximum number of parallel threads to spawn for this worker.
    * Defaults to `navigator.hardwareConcurrency` when omitted.
@@ -131,10 +132,10 @@ export interface WorkerInstanceConfig<
 > {
   /** Name of the parent worker config, used in logs and error objects. */
   workerName: WorkerName;
-  /** The function serialised and executed inside the thread (optional if `workerURL` is set). */
+  /** The function serialised and executed inside the thread (optional if `createWorker` is set). */
   workerFunc?: TFunc;
-  /** Worker script URL (string or URL object). */
-  workerURL?: string | URL;
+  /** Factory function returning a Worker instance. */
+  createWorker?: () => Worker;
   /** Zero-based shard index assigned to this thread. */
   index: number;
   /** The data payload (full or partitioned shard) sent to the thread. */

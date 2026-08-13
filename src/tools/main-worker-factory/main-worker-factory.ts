@@ -16,10 +16,10 @@ import { WorkerMode } from '../worker-factory/worker-factory';
 
 /**
  * Recursively collects all Transferable objects from a value.
- * Transferables (ArrayBuffer, MessagePort, ImageBitmap, OffscreenCanvas)
+ * Transferable (ArrayBuffer, MessagePort, ImageBitmap, OffscreenCanvas)
  * are zero-copy — they are moved to the worker instead of cloned.
  */
-export function extractTransferables(
+export function extractTransferable(
   value: unknown,
   seen = new Set<object>(),
 ): Transferable[] {
@@ -41,11 +41,11 @@ export function extractTransferables(
   }
 
   if (Array.isArray(value)) {
-    return value.flatMap((item) => extractTransferables(item, seen));
+    return value.flatMap((item) => extractTransferable(item, seen));
   }
 
   return Object.values(value as object).flatMap((v) =>
-    extractTransferables(v, seen),
+    extractTransferable(v, seen),
   );
 }
 
@@ -83,6 +83,8 @@ class MainWorkerFactory<
   private readonly _workers: WorkerConfig[];
   private readonly _threads: number;
   private readonly _persistentWorkers: Map<string, Worker> = new Map();
+  private readonly _activeWorkers: Set<Worker> = new Set();
+  private _isTerminated = false;
 
   /**
    * Creates a new `MainWorkerFactory`.
@@ -95,15 +97,48 @@ class MainWorkerFactory<
   }
 
   /**
+   * Returns `true` if the factory has been terminated.
+   */
+  get isTerminated(): boolean {
+    return this._isTerminated;
+  }
+
+  /**
+   * Registers an active worker instance for lifecycle tracking.
+   */
+  private trackWorker(worker: Worker): Worker {
+    if (this._isTerminated) {
+      worker.terminate();
+      throw new Error('MainWorkerFactory has been terminated');
+    }
+    this._activeWorkers.add(worker);
+    return worker;
+  }
+
+  /**
+   * Terminates a worker instance and removes it from tracking.
+   */
+  private terminateWorker(worker: Worker): void {
+    this._activeWorkers.delete(worker);
+    try {
+      worker.terminate();
+    } catch {
+      // Ignore errors if worker is already terminated
+    }
+  }
+
+  /**
    * Instantiates a {@link WorkerFactory} for the given worker configuration.
    *
-   * @param config - The worker configuration containing `func` or `workerURL`.
+   * @param config - The worker configuration containing `func` or `createWorker`.
    * @returns A new `WorkerFactory` wrapping the worker.
    */
   private initWorker(config: WorkerConfig): WorkerFactory {
-    return new WorkerFactory(config.func, {
-      workerURL: config.workerURL,
+    const factory = new WorkerFactory(config.func, {
+      createWorker: config.createWorker,
     });
+    this.trackWorker(factory.getWorker);
+    return factory;
   }
 
   /**
@@ -189,6 +224,10 @@ class MainWorkerFactory<
   ): Promise<
     TypedSettledResults<WorkerReturnType<WorkerConfigMap<TConfigs>[TName]>>
   > {
+    if (this._isTerminated) {
+      return Promise.reject(new Error('MainWorkerFactory has been terminated'));
+    }
+
     const config = this.findWorkerByName(workerName);
     if (!config)
       return Promise.reject(new Error(`Worker "${workerName}" not found`));
@@ -243,7 +282,7 @@ class MainWorkerFactory<
       return this.runWorkerWithRetry(
         {
           workerFunc: config.func,
-          workerURL: config.workerURL,
+          createWorker: config.createWorker,
           workerName,
           index,
           data: { data, ...otherParams },
@@ -296,15 +335,14 @@ class MainWorkerFactory<
    * Any transferable objects found in the payload are moved (not copied) to
    * the worker via the `transfer` list of `postMessage`.
    *
-   * The underlying `Worker` is always terminated after the first message,
-   * whether it succeeded or failed.
+   * The underlying `Worker` is always terminated after the message completes.
    *
-   * @param instanceConfig - Worker function, URL, name, shard index, and data.
+   * @param instanceConfig - Worker function, factory, name, shard index, and data.
    * @returns A promise that resolves with the worker's result.
    */
   private initiateWorker({
     workerFunc,
-    workerURL,
+    createWorker,
     workerName,
     index,
     data,
@@ -314,25 +352,37 @@ class MainWorkerFactory<
         name: workerName,
         role: '',
         func: workerFunc,
-        workerURL,
+        createWorker,
       });
       const raw = worker.getWorker;
 
       raw.onerror = (event) => {
-        raw.terminate();
+        this.terminateWorker(raw);
         reject({
           index,
-          workerConfigs: { workerFunc, workerName, index, data },
+          workerConfigs: {
+            workerFunc,
+            createWorker,
+            workerName,
+            index,
+            data,
+          },
           failedResult: event,
         });
       };
 
       raw.onmessage = (event) => {
         if (event.data?.ok === false) {
-          raw.terminate();
+          this.terminateWorker(raw);
           reject({
             index,
-            workerConfigs: { workerFunc, workerName, index, data },
+            workerConfigs: {
+              workerFunc,
+              createWorker,
+              workerName,
+              index,
+              data,
+            },
             failedResult: new ErrorEvent('error', {
               message: event.data.error,
             }),
@@ -341,19 +391,25 @@ class MainWorkerFactory<
         }
         resolve({
           index,
-          workerConfigs: { workerFunc, workerName, index, data },
+          workerConfigs: {
+            workerFunc,
+            createWorker,
+            workerName,
+            index,
+            data,
+          },
           successResult: new MessageEvent('message', {
             data: event.data?.data,
           }),
         });
-        raw.terminate();
+        this.terminateWorker(raw);
       };
 
       const payload = {
         index,
         ...(Array.isArray(data) ? { data } : (data as Record<string, unknown>)),
       };
-      raw.postMessage(payload, extractTransferables(payload));
+      raw.postMessage(payload, extractTransferable(payload));
     });
   }
 
@@ -396,6 +452,10 @@ class MainWorkerFactory<
     settled: TypedSettledResults<T>,
     options: CollectOptions<T, R> = {},
   ): Promise<CollectedResult<R>> {
+    if (this._isTerminated) {
+      throw new Error('MainWorkerFactory has been terminated');
+    }
+
     const fulfilled = settled.results.filter(
       (r) => r.status === 'fulfilled',
     ) as PromiseFulfilledResult<WorkerResult>[];
@@ -423,15 +483,15 @@ class MainWorkerFactory<
         });
       `;
       const blob = new Blob([workerSrc], { type: 'application/javascript' });
-      const worker = new Worker(URL.createObjectURL(blob));
+      const worker = this.trackWorker(new Worker(URL.createObjectURL(blob)));
 
       worker.onmessage = (e) => {
-        worker.terminate();
+        this.terminateWorker(worker);
         if (e.data.ok) resolve(e.data.data);
         else reject(new Error(e.data.error));
       };
       worker.onerror = (e) => {
-        worker.terminate();
+        this.terminateWorker(worker);
         reject(e);
       };
       worker.postMessage(shards);
@@ -472,6 +532,10 @@ class MainWorkerFactory<
    * console.log(result); // final transformed + filtered data
    */
   async pipeline<TResult = unknown>(steps: PipelineStep[]): Promise<TResult> {
+    if (this._isTerminated) {
+      throw new Error('MainWorkerFactory has been terminated');
+    }
+
     if (steps.length === 0) {
       throw new Error('Pipeline requires at least one step');
     }
@@ -485,18 +549,18 @@ class MainWorkerFactory<
 
       return new Promise<TResult>((resolve, reject) => {
         raw.onmessage = (e) => {
-          raw.terminate();
+          this.terminateWorker(raw);
           if (e.data?.ok === false) reject(new Error(e.data.error));
           else resolve(e.data?.data as TResult);
         };
         raw.onerror = (e) => {
-          raw.terminate();
+          this.terminateWorker(raw);
           reject(e);
         };
         const payload = step.srcData ?? {};
         raw.postMessage(
           { data: payload, index: 0 },
-          extractTransferables(payload),
+          extractTransferable(payload),
         );
       });
     }
@@ -515,9 +579,10 @@ class MainWorkerFactory<
         }
         const factory = new WorkerFactory(config.func, {
           mode: WorkerMode.Pipeline,
-          workerURL: config.workerURL,
+          createWorker: config.createWorker,
         });
-        workers.push(factory.getWorker);
+        const raw = this.trackWorker(factory.getWorker);
+        workers.push(raw);
       }
 
       // Create channels between adjacent workers
@@ -554,12 +619,12 @@ class MainWorkerFactory<
       const lastWorker = workers[workers.length - 1];
       lastWorker.onmessage = (e) => {
         // Terminate all workers
-        workers.forEach((w) => w.terminate());
+        workers.forEach((w) => this.terminateWorker(w));
         if (e.data?.ok === false) reject(new Error(e.data.error));
         else resolve(e.data?.data as TResult);
       };
       lastWorker.onerror = (e) => {
-        workers.forEach((w) => w.terminate());
+        workers.forEach((w) => this.terminateWorker(w));
         reject(e);
       };
 
@@ -567,7 +632,7 @@ class MainWorkerFactory<
       const firstPayload = steps[0].srcData ?? {};
       workers[0].postMessage(
         { data: firstPayload, index: 0 },
-        extractTransferables(firstPayload),
+        extractTransferable(firstPayload),
       );
     });
   }
@@ -610,6 +675,10 @@ class MainWorkerFactory<
     workerName: string,
     params: { dataset?: unknown; config: unknown },
   ): Promise<TResult> {
+    if (this._isTerminated) {
+      throw new Error('MainWorkerFactory has been terminated');
+    }
+
     const config = this.findWorkerByName(workerName);
     if (!config) throw new Error(`Worker "${workerName}" not found`);
 
@@ -618,9 +687,9 @@ class MainWorkerFactory<
     if (!raw) {
       const factory = new WorkerFactory(config.func, {
         mode: WorkerMode.Persistent,
-        workerURL: config.workerURL,
+        createWorker: config.createWorker,
       });
-      raw = factory.getWorker;
+      raw = this.trackWorker(factory.getWorker);
       this._persistentWorkers.set(workerName, raw);
     }
 
@@ -643,7 +712,7 @@ class MainWorkerFactory<
       if (params.dataset !== undefined) {
         message.dataset = params.dataset;
       }
-      raw!.postMessage(message, extractTransferables(message));
+      raw!.postMessage(message, extractTransferable(message));
     });
   }
 
@@ -659,10 +728,62 @@ class MainWorkerFactory<
   release(workerName: string): void {
     const raw = this._persistentWorkers.get(workerName);
     if (raw) {
-      raw.postMessage({ type: 'release' });
-      raw.terminate();
+      try {
+        raw.postMessage({ type: 'release' });
+      } catch {
+        // Ignore
+      }
+      this.terminateWorker(raw);
       this._persistentWorkers.delete(workerName);
     }
+  }
+
+  /**
+   * Terminates the factory and all active and persistent worker instances.
+   *
+   * Calling `terminate()` immediately stops all running worker threads, releases
+   * cached persistent workers, and clears all internal worker state.
+   */
+  terminate(): void {
+    this._isTerminated = true;
+
+    for (const worker of this._persistentWorkers.values()) {
+      try {
+        worker.postMessage({ type: 'release' });
+      } catch {
+        // Ignore
+      }
+      this.terminateWorker(worker);
+    }
+    this._persistentWorkers.clear();
+
+    for (const worker of Array.from(this._activeWorkers)) {
+      this.terminateWorker(worker);
+    }
+    this._activeWorkers.clear();
+  }
+
+  /**
+   * Alias for {@link terminate}. Terminates the factory and all worker instances.
+   */
+  destroy(): void {
+    this.terminate();
+  }
+
+  /**
+   * Resets the factory by terminating all active and persistent workers
+   * and resetting the factory state, allowing new worker instances to be initiated.
+   */
+  reset(): void {
+    this.terminate();
+    this._isTerminated = false;
+  }
+
+  /**
+   * Alias for {@link reset}. Resets the factory state to initiate new worker instances.
+   */
+  restart(): void {
+    this.reset();
   }
 }
 
