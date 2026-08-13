@@ -1,5 +1,11 @@
 # Changelog
 
+# [0.13.0](https://github.com/aminqp/workerkit/compare/v0.12.3...v0.13.0) (2026-08-13)
+
+### Features
+
+- **main-worker-factory:** add terminate, destroy, reset, and restart lifecycle methods ([0248946](https://github.com/aminqp/workerkit/commit/0248946e42a40867fc42a41c50cf94d3ec304ff2))
+
 ## [0.12.3](https://github.com/aminqp/workerkit/compare/v0.12.2...v0.12.3) (2026-08-13)
 
 ### Features
