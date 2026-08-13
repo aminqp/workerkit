@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.12.3](https://github.com/aminqp/workerkit/compare/v0.12.2...v0.12.3) (2026-08-13)
+
+### Features
+
+- add workerInstance option to WorkerFactory to allow using existing worker instances ([2f2e34b](https://github.com/aminqp/workerkit/commit/2f2e34b311a648b2067bbe83ea562f83e1314d04))
+
 ## [0.12.2](https://github.com/aminqp/workerkit/compare/v0.12.1...v0.12.2) (2026-08-13)
 
 ## [0.12.1](https://github.com/aminqp/workerkit/compare/v0.12.0...v0.12.1) (2026-08-13)
