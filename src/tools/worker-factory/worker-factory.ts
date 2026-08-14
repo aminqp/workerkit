@@ -69,10 +69,15 @@ const workerFn = ${func};
 let outputPort = null;
 let inputPort = null;
 let pendingData = null;
+let stepParams = {};
 
 async function processData(data) {
   try {
-    const output = await workerFn(data);
+    const payload =
+      typeof data === 'object' && data !== null && 'data' in data
+        ? { ...stepParams, ...data }
+        : { data, ...stepParams, index: 0 };
+    const output = await workerFn(payload);
     const result = { ok: true, data: output };
     const transfers = extractTransferables(output);
     if (outputPort) {
@@ -92,6 +97,9 @@ async function processData(data) {
 
 self.addEventListener('message', (event) => {
   if (event.data && event.data.__pipeline_ports__) {
+    if (event.data.stepParams) {
+      stepParams = event.data.stepParams;
+    }
     if (event.data.outputPort) {
       outputPort = event.data.outputPort;
     }
@@ -103,7 +111,7 @@ self.addEventListener('message', (event) => {
           if (outputPort) outputPort.postMessage(e.data);
           else self.postMessage(e.data);
         } else {
-          processData({ data: e.data.data, index: 0 });
+          processData({ data: e.data.data, ...stepParams, index: 0 });
         }
       };
     }

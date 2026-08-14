@@ -201,4 +201,6 @@ export interface PipelineStep {
   worker: string;
   /** Input data for the first step (subsequent steps receive previous output) */
   srcData?: unknown;
+  /** Any additional step parameters, configs, or options forwarded to the worker payload. */
+  [key: string]: unknown;
 }

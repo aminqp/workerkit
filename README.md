@@ -75,27 +75,32 @@ When worker logic relies on external npm packages (such as Luxon, `date-fns`, `i
 
 Passing `createWorker` enables modern module bundlers (Webpack 5, Vite, Rollup, Parcel) to analyze and bundle the worker file along with all of its dependencies into a dedicated ES module worker chunk.
 
-### Dedicated Worker Script
+### Dedicated Worker Script with `defineWorker`
+
+When writing standalone worker files, wrap your export in `defineWorker`. This automatically handles standard runs, worker-to-worker pipelines (`pipeline()`), and persistent dataset caching without manual `postMessage` / `onmessage` boilerplate:
 
 ```ts
 // transform-data.worker.ts
+import { defineWorker } from '@offmain/workerkit';
 import { format } from 'date-fns';
 import { t } from './i18n.ts';
 
-self.addEventListener('message', (event) => {
-  try {
-    const { items, locale } = event.data.data;
-    const result = items.map((item: any) => ({
+export default defineWorker(
+  async ({
+    data,
+    options,
+  }: {
+    data: { items: any[]; locale: string };
+    options?: { prefix?: string };
+  }) => {
+    const { items, locale } = data;
+    return items.map((item: any) => ({
       ...item,
       formattedDate: format(new Date(item.timestamp), 'yyyy-MM-dd'),
-      label: t('transaction', locale),
+      label: (options?.prefix ?? '') + t('transaction', locale),
     }));
-
-    self.postMessage({ ok: true, data: result });
-  } catch (err) {
-    self.postMessage({ ok: false, error: (err as Error).message });
-  }
-});
+  },
+);
 ```
 
 ### Webpack 5 & Vite Static Analysis (`createWorker`)
@@ -176,7 +181,7 @@ Only the final result crosses back to the main thread. If your pipeline generate
 
 ### Usage
 
-```ts
+````ts
 import { MainWorkerFactory } from '@offmain/workerkit';
 import { fetchData, transform, aggregate } from './workers.ts';
 
@@ -188,20 +193,33 @@ const factory = new MainWorkerFactory({
   ] as const,
 });
 
+### Step-Specific Options and Configs in Pipeline
+
+You can pass step-specific parameters (such as `options`, `configs`, etc.) directly to each pipeline step:
+
+```ts
 const result = await factory.pipeline<AggregateResult>([
-  { worker: 'fetchData', srcData: { url: '/api/records' } },
-  { worker: 'transform' }, // receives fetchData output directly
-  { worker: 'aggregate' }, // receives transform output directly
+  {
+    worker: 'fetchData',
+    srcData: { url: '/api/records' },
+    options: { timeout: 5000 },
+  },
+  {
+    worker: 'transform',
+    configs: { multiplier: 2 },
+  },
+  {
+    worker: 'aggregate',
+    options: { threshold: 10 },
+  },
 ]);
+````
 
-console.log(result); // only this small result crossed to main thread
-```
+### How each step receives data and parameters
 
-### How each step receives data
-
-- The first step receives `srcData` as `{ data: srcData, index: 0 }` — same as `runWorker`.
-- Each subsequent step receives the previous step's output as `{ data: previousOutput, index: 0 }`.
-- Worker functions don't need any special handling — they use the same `{ data }` parameter signature as regular workers.
+- The first step receives `srcData` merged with its step parameters as `{ data: srcData, options: { timeout: 5000 }, index: 0 }`.
+- Each subsequent step receives the previous step's output merged with its step parameters as `{ data: previousOutput, configs: { multiplier: 2 }, index: 0 }`.
+- Worker functions (both inline functions and native scripts using `defineWorker`) receive all step parameters in their first argument.
 
 ### When to use pipeline vs runWorker
 
@@ -310,11 +328,42 @@ The framework handles the caching transparently — your function always receive
 
 The cached dataset lives in worker memory until `release()` is called. For large datasets, always call `release()` when you're done to free the memory:
 
+After releasing, the next `runPersistent` call will create a fresh worker instance (requiring a new dataset).
+
+---
+
+## Lifecycle Management (`terminate`, `destroy`, `reset`, `restart`)
+
+`MainWorkerFactory` provides built-in lifecycle management to terminate running workers and clean up browser resources:
+
+### `terminate()` / `destroy()`
+
+Immediately stops all active workers (one-shot tasks, pipelines, reducers) and releases all cached persistent workers:
+
 ```ts
-factory.release('transform');
+// Stop all active threads and release persistent workers
+factory.terminate();
+// or
+factory.destroy(); // Alias for terminate()
+
+console.log(factory.isTerminated); // true
 ```
 
-After releasing, the next `runPersistent` call will create a fresh worker instance (requiring a new dataset).
+After calling `terminate()`, any attempt to run workers on the factory instance will immediately reject.
+
+### `reset()` / `restart()`
+
+Terminates all active/persistent worker instances and restores the factory to an active state (`isTerminated = false`), allowing new worker instances to be initiated cleanly:
+
+```ts
+// Stop existing workers and reset factory state
+factory.reset(); // or factory.restart()
+
+console.log(factory.isTerminated); // false
+
+// Factory is ready to initiate fresh worker instances again
+const settled = await factory.runWorker('sum', { srcData: [1, 2, 3] });
+```
 
 ---
 

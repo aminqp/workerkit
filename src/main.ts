@@ -221,6 +221,36 @@ const workerConfigs = [
       ),
     maxConcurrency: 4,
   },
+  {
+    name: 'nativeStep1',
+    role: 'io',
+    createWorker: () =>
+      new Worker(
+        new URL('./examples/native-step1.worker.ts', import.meta.url),
+        { type: 'module' },
+      ),
+    maxConcurrency: 1,
+  },
+  {
+    name: 'nativeStep2',
+    role: 'transform',
+    createWorker: () =>
+      new Worker(
+        new URL('./examples/native-step2.worker.ts', import.meta.url),
+        { type: 'module' },
+      ),
+    maxConcurrency: 1,
+  },
+  {
+    name: 'nativeStep3',
+    role: 'computation',
+    createWorker: () =>
+      new Worker(
+        new URL('./examples/native-step3.worker.ts', import.meta.url),
+        { type: 'module' },
+      ),
+    maxConcurrency: 1,
+  },
 ] as const;
 
 const foreman = new MainWorkerFactory({ workers: workerConfigs });

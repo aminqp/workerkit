@@ -22,7 +22,7 @@ export function initPipelineCard(foreman: Foreman) {
       const result: FilteredPost[] = await foreman.pipeline([
         { worker: 'fetchPosts', srcData: { limit: 200 } },
         { worker: 'transformPosts' },
-        { worker: 'filterPosts' },
+        { worker: 'filterPosts', options: { minWords: 8 } },
       ]);
 
       const lines = [

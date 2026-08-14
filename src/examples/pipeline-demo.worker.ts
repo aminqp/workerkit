@@ -57,10 +57,13 @@ export function transformPosts({ data }: { data: Post[] }): EnrichedPost[] {
  */
 export function filterPosts({
   data,
+  options,
 }: {
   data: EnrichedPost[];
+  options?: { minWords?: number };
 }): FilteredPost[] {
+  const minWords = options?.minWords ?? 10;
   return data
-    .filter((post) => post.wordCount > 10)
+    .filter((post) => post.wordCount > minWords)
     .map((post) => ({ ...post, isLong: post.wordCount > 20 }));
 }

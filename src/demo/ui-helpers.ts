@@ -21,6 +21,8 @@ export type CardId =
   | 'bench'
   | 'fetch'
   | 'pipeline'
+  | 'native-pipeline'
+  | 'worker-instance'
   | 'pipeline-bench'
   | 'persistent'
   | 'persistent-bench'

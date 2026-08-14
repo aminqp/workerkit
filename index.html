@@ -247,6 +247,29 @@
           <pre class="card-result" id="result-pipeline"></pre>
         </div>
 
+        <div class="card">
+          <div class="card-header">
+            <span class="card-tag">Native Pipeline</span>
+            <h2 class="card-title">Native Pipeline Workers (defineWorker)</h2>
+            <p class="card-desc">
+              Chains 3 Web Workers defined using <code>defineWorker</code> — nativeStep1 → nativeStep2 → nativeStep3. Demonstrates type-safe pipeline execution with automatic zero-copy transfers and port wiring.
+            </p>
+          </div>
+          <div class="card-meta">
+            <span
+              >Pipeline:
+              <code>nativeStep1 → nativeStep2 → nativeStep3</code></span
+            >
+            <span>Helper: <code>defineWorker()</code></span>
+            <span>Workers: <code>Web Worker Modules (createWorker)</code></span>
+          </div>
+          <button id="btn-native-pipeline" type="button" class="run-btn">
+            Run native pipeline
+          </button>
+          <div class="card-status" id="status-native-pipeline">idle</div>
+          <pre class="card-result" id="result-native-pipeline"></pre>
+        </div>
+
         <!-- CPU-bound -->
         <div class="card">
           <div class="card-header">

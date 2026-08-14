@@ -1,9 +1,13 @@
-export default () => {
-  self.addEventListener('message', (event) => {
-    const { a, b } = event.data;
+/**
+ * Simple sum worker example using `defineWorker`.
+ */
+import { defineWorker } from '../tools/define-worker.ts';
 
-    const sum = a + b;
+export interface SumPayload {
+  a: number;
+  b: number;
+}
 
-    self.postMessage(sum);
-  });
-};
+export default defineWorker<SumPayload, number>(({ a, b }) => {
+  return a + b;
+});

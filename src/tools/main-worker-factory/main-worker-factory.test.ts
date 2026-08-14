@@ -573,6 +573,47 @@ describe('pipeline', () => {
     });
   });
 
+  it('forwards step-specific configs and options in pipeline steps', async () => {
+    const factory = makeFactory([
+      { name: 'w1', role: 'compute', func: noop },
+      { name: 'w2', role: 'compute', func: noop },
+    ]);
+
+    const promise = factory.pipeline([
+      { worker: 'w1', srcData: { limit: 10 }, options: { timeout: 1000 } },
+      { worker: 'w2', configs: { multiplier: 5 } },
+    ]);
+
+    await Promise.resolve();
+
+    // Step 0 worker should receive stepParams containing options
+    expect(workerInstances[0].postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        __pipeline_ports__: true,
+        stepParams: { options: { timeout: 1000 } },
+      }),
+      expect.anything(),
+    );
+
+    // Step 1 worker should receive stepParams containing configs
+    expect(workerInstances[1].postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        __pipeline_ports__: true,
+        stepParams: { configs: { multiplier: 5 } },
+      }),
+      expect.anything(),
+    );
+
+    workerInstances[1].onmessage?.(
+      new MessageEvent('message', {
+        data: { ok: true, data: 'configured-result' },
+      }),
+    );
+
+    const res = await promise;
+    expect(res).toBe('configured-result');
+  });
+
   it('rejects and terminates all workers on error from last worker', async () => {
     const factory = makeFactory([
       { name: 'w1', role: 'compute', func: noop },
@@ -898,6 +939,20 @@ describe('MainWorkerFactory – createWorker support', () => {
     await Promise.resolve();
     expect(workerInstances).toHaveLength(2);
 
+    // Simulate step 1 (native plain worker) posting result back to main thread
+    workerInstances[0].onmessage?.(
+      new MessageEvent('message', {
+        data: { ok: true, data: 'step1-native-output' },
+      }),
+    );
+
+    // Verify step 1 output was relayed to step 2 worker
+    expect(workerInstances[1].postMessage).toHaveBeenCalledWith(
+      { data: 'step1-native-output', index: 0 },
+      [],
+    );
+
+    // Simulate step 2 posting final result
     workerInstances[1].onmessage?.(
       new MessageEvent('message', {
         data: { ok: true, data: 'pipeline-create-worker-result' },

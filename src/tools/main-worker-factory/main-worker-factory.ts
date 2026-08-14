@@ -542,6 +542,7 @@ class MainWorkerFactory<
 
     if (steps.length === 1) {
       const step = steps[0];
+      const { worker: _w, srcData, ...stepParams } = step;
       const config = this.findWorkerByName(step.worker);
       if (!config) throw new Error(`Worker "${step.worker}" not found`);
       const worker = this.initWorker(config);
@@ -557,11 +558,9 @@ class MainWorkerFactory<
           this.terminateWorker(raw);
           reject(e);
         };
-        const payload = step.srcData ?? {};
-        raw.postMessage(
-          { data: payload, index: 0 },
-          extractTransferable(payload),
-        );
+        const payloadData = srcData ?? {};
+        const payload = { data: payloadData, ...stepParams, index: 0 };
+        raw.postMessage(payload, extractTransferable(payload));
       });
     }
 
@@ -593,6 +592,7 @@ class MainWorkerFactory<
       // Wire up: each worker (except last) gets an output port
       // Each worker (except first) gets an input port
       for (let i = 0; i < workers.length; i++) {
+        const { worker: _w, srcData: _s, ...stepParams } = steps[i];
         const transferList: Transferable[] = [];
         const ports: { inputPort?: MessagePort; outputPort?: MessagePort } = {};
 
@@ -610,9 +610,35 @@ class MainWorkerFactory<
 
         // Send ports to the worker for pipeline wiring
         workers[i].postMessage(
-          { __pipeline_ports__: true, ...ports },
+          { __pipeline_ports__: true, stepParams, ...ports },
           transferList,
         );
+
+        // Fallback relay for plain native workers that post messages to the main thread
+        if (i < workers.length - 1) {
+          const currentWorker = workers[i];
+          const nextWorker = workers[i + 1];
+          const { worker: _w, srcData: _s, ...nextParams } = steps[i + 1];
+
+          currentWorker.onmessage = (e) => {
+            if (e.data && e.data.__pipeline_ports__) return;
+
+            if (e.data?.ok === false) {
+              workers.forEach((w) => this.terminateWorker(w));
+              reject(new Error(e.data.error));
+              return;
+            }
+
+            const payloadData = e.data?.ok !== undefined ? e.data.data : e.data;
+            const payload = { data: payloadData, ...nextParams, index: 0 };
+            nextWorker.postMessage(payload, extractTransferable(payload));
+          };
+
+          currentWorker.onerror = (e) => {
+            workers.forEach((w) => this.terminateWorker(w));
+            reject(e);
+          };
+        }
       }
 
       // Listen for the final worker's result
@@ -628,12 +654,11 @@ class MainWorkerFactory<
         reject(e);
       };
 
-      // Kick off the first worker with srcData
-      const firstPayload = steps[0].srcData ?? {};
-      workers[0].postMessage(
-        { data: firstPayload, index: 0 },
-        extractTransferable(firstPayload),
-      );
+      // Kick off the first worker with srcData and stepParams
+      const { worker: _w0, srcData: s0Data, ...s0Params } = steps[0];
+      const firstPayloadData = s0Data ?? {};
+      const firstPayload = { data: firstPayloadData, ...s0Params, index: 0 };
+      workers[0].postMessage(firstPayload, extractTransferable(firstPayload));
     });
   }
 
