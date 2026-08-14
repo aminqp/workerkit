@@ -1,5 +1,11 @@
 # Changelog
 
+# [0.14.0](https://github.com/aminqp/workerkit/compare/v0.13.0...v0.14.0) (2026-08-14)
+
+### Features
+
+- **worker:** add `defineWorker` helper for native Web Worker compatibility ([ce9b592](https://github.com/aminqp/workerkit/commit/ce9b592d14998fe8afb4c4e83ad73db9b8392782))
+
 # [0.13.0](https://github.com/aminqp/workerkit/compare/v0.12.3...v0.13.0) (2026-08-13)
 
 ### Features
