@@ -350,13 +350,13 @@ describe('runWorker – error handling', () => {
 // ── edge cases ──────────────────────────────────────────────────────────────
 
 describe('runWorker – edge cases', () => {
-  it('does not partition a single-element array', async () => {
+  it('spawns only as many threads as needed for a single-element array without duplicating', async () => {
     const factory = makeFactory([
       {
         name: 'w1',
         role: 'computation',
         func: noop,
-        maxConcurrency: 2,
+        maxConcurrency: 4,
         partition: true,
       },
     ]);
@@ -365,12 +365,38 @@ describe('runWorker – edge cases', () => {
     await autoRespond();
     await promise;
 
-    // srcData.length === 1 → shouldPartition is false → full array sent
-    workerInstances.forEach((w) =>
-      expect(w.postMessage).toHaveBeenCalledWith(
-        expect.objectContaining({ data: [42] }),
-        expect.any(Array),
-      ),
+    // Only 1 chunk produced → 1 worker thread spawned
+    expect(workerInstances).toHaveLength(1);
+    expect(workerInstances[0].postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ data: [42] }),
+      expect.any(Array),
+    );
+  });
+
+  it('spawns only as many threads as array chunks when array length < maxConcurrency', async () => {
+    const factory = makeFactory([
+      {
+        name: 'w1',
+        role: 'computation',
+        func: noop,
+        maxConcurrency: 8,
+        partition: true,
+      },
+    ]);
+
+    const promise = factory.runWorker('w1', { srcData: [10, 20] });
+    await autoRespond();
+    await promise;
+
+    // Array length is 2 → only 2 worker threads spawned instead of 8
+    expect(workerInstances).toHaveLength(2);
+    expect(workerInstances[0].postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ data: [10] }),
+      expect.any(Array),
+    );
+    expect(workerInstances[1].postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ data: [20] }),
+      expect.any(Array),
     );
   });
 
@@ -397,28 +423,24 @@ describe('runWorker – edge cases', () => {
     );
   });
 
-  it('handles empty array srcData', async () => {
+  it('handles empty array srcData when partition: true', async () => {
     const factory = makeFactory([
       {
         name: 'w1',
         role: 'computation',
         func: noop,
-        maxConcurrency: 2,
+        maxConcurrency: 4,
         partition: true,
       },
     ]);
 
     const promise = factory.runWorker('w1', { srcData: [] });
     await autoRespond();
-    await promise;
+    const settled = await promise;
 
-    // empty array → shouldPartition false → raw [] forwarded
-    workerInstances.forEach((w) =>
-      expect(w.postMessage).toHaveBeenCalledWith(
-        expect.objectContaining({ data: [] }),
-        expect.any(Array),
-      ),
-    );
+    // Empty array → 0 worker threads spawned
+    expect(workerInstances).toHaveLength(0);
+    expect(settled.results).toHaveLength(0);
   });
 
   it('result includes correct index per worker', async () => {
@@ -683,6 +705,76 @@ describe('pipeline', () => {
     const result = await promise;
     expect(result.total).toBe(6);
     expect(result.avg).toBe(2);
+  });
+
+  it('spawns exactly 1 worker per pipeline step even when partition: true and maxConcurrency > 1 are set', async () => {
+    const factory = makeFactory([
+      {
+        name: 'step1',
+        role: 'compute',
+        func: noop,
+        partition: true,
+        maxConcurrency: 8,
+      },
+      {
+        name: 'step2',
+        role: 'compute',
+        func: noop,
+        partition: true,
+        maxConcurrency: 10,
+      },
+    ]);
+
+    const promise = factory.pipeline([
+      { worker: 'step1', srcData: [1, 2, 3, 4, 5] },
+      { worker: 'step2' },
+    ]);
+
+    await Promise.resolve();
+
+    // Pipeline creates exactly 1 worker per step (2 total), ignoring multi-thread partitioning
+    expect(workerInstances).toHaveLength(2);
+
+    workerInstances[1].onmessage?.(
+      new MessageEvent('message', {
+        data: { ok: true, data: [2, 4, 6, 8, 10] },
+      }),
+    );
+
+    const result = await promise;
+    expect(result).toEqual([2, 4, 6, 8, 10]);
+  });
+
+  it('forwards partition: true passed in pipeline step config cleanly as a step parameter', async () => {
+    const factory = makeFactory([
+      { name: 'step1', role: 'compute', func: noop },
+      { name: 'step2', role: 'compute', func: noop },
+    ]);
+
+    const promise = factory.pipeline([
+      { worker: 'step1', srcData: [10, 20] },
+      { worker: 'step2', partition: true },
+    ]);
+
+    await Promise.resolve();
+
+    // Step 2 worker receives stepParams containing { partition: true }
+    expect(workerInstances[1].postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        __pipeline_ports__: true,
+        stepParams: { partition: true },
+      }),
+      expect.anything(),
+    );
+
+    workerInstances[1].onmessage?.(
+      new MessageEvent('message', {
+        data: { ok: true, data: [20, 40] },
+      }),
+    );
+
+    const res = await promise;
+    expect(res).toEqual([20, 40]);
   });
 });
 

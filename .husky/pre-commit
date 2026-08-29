@@ -1,1 +1,5 @@
-npm run lint-staged
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+export PATH="$PATH:$HOME/Library/pnpm:$HOME/.pnpm:$HOME/.local/share/pnpm:/opt/homebrew/bin:/usr/local/bin"
+
+pnpm run lint-staged

@@ -233,19 +233,22 @@ class MainWorkerFactory<
       return Promise.reject(new Error(`Worker "${workerName}" not found`));
 
     const threadCount = config.maxConcurrency ?? this._threads;
-    const shouldPartition = Boolean(
-      Array.isArray(srcData) && srcData.length > 1 && config.partition,
-    );
+    const shouldPartition = Boolean(Array.isArray(srcData) && config.partition);
 
     const processedData = shouldPartition
       ? this.partitionArray(srcData as unknown[], threadCount)
       : srcData;
 
+    const actualThreadCount =
+      shouldPartition && Array.isArray(processedData)
+        ? processedData.length
+        : threadCount;
+
     const promises = this.createWorkerPromises(
       config,
       workerName,
       { data: processedData, ...otherParams },
-      threadCount,
+      actualThreadCount,
       shouldPartition,
     );
 

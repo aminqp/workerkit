@@ -155,6 +155,14 @@ const { data } = await factory.collectResults(settled, {
 
 > **Note:** The reducer runs inside a worker thread and must be self-contained — it cannot reference variables from the outer scope.
 
+### Dynamic Thread Scaling & Partitioning Behavior
+
+When `partition: true` is enabled on a worker:
+
+- **Dynamic Thread Allocation:** The library calculates worker thread count as `Math.min(maxConcurrency, srcData.length)`. For instance, if an array has 2 items and `maxConcurrency` is 20, the factory will spawn **only 2 worker threads** (instead of 20), eliminating idle thread overhead and memory pressure.
+- **No Data Duplication:** Each thread receives only its assigned chunk (e.g. Worker 0 gets `[item1]`, Worker 1 gets `[item2]`), ensuring results are processed once without duplication.
+- **Non-Partitioned Workers (`partition: false` / omitted):** If `partition` is not enabled, the input payload is not split, and up to `maxConcurrency` threads will each execute the full payload independently in parallel.
+
 ---
 
 ## Pipeline
@@ -223,12 +231,15 @@ const result = await factory.pipeline<AggregateResult>([
 
 ### When to use pipeline vs runWorker
 
-| Scenario                                             | Use                     |
-| ---------------------------------------------------- | ----------------------- |
-| Single step, or steps that need partitioning/retries | `runWorker`             |
-| Multi-step chain where intermediate data is large    | `pipeline`              |
-| Steps that are independent (not sequential)          | `runWorker` in parallel |
-| Steps where only the final result matters to the UI  | `pipeline`              |
+| Scenario                                                      | Use                     |
+| ------------------------------------------------------------- | ----------------------- |
+| Single step, or steps that need multi-core array partitioning | `runWorker`             |
+| Multi-step chain where intermediate data is large             | `pipeline`              |
+| Steps that are independent (not sequential)                   | `runWorker` in parallel |
+| Steps where only the final result matters to the UI           | `pipeline`              |
+
+> **Note on `partition: true` in Pipelines:**  
+> `pipeline()` creates **1 worker thread per step** in a linear 1:1 `MessageChannel` chain. If a worker in a pipeline step has `partition: true`, `pipeline()` processes it as a single streaming step without splitting it across parallel worker threads. For parallel multi-core array partitioning across CPU threads, use `runWorker()`.
 
 ---
 
