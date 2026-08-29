@@ -16,6 +16,7 @@ import { initPersistentBenchCard } from './cards/persistent-bench';
 import { initBundlerCard } from './cards/bundler';
 import { initWorkerInstanceCard } from './cards/worker-instance';
 import { initNativePipelineCard } from './cards/native-pipeline';
+import { initMemoryCard } from './cards/memory';
 import type { Foreman } from './ui-helpers';
 
 export function initDemo(foreman: Foreman) {
@@ -37,4 +38,5 @@ export function initDemo(foreman: Foreman) {
   initBundlerCard(foreman);
   initWorkerInstanceCard(foreman);
   initNativePipelineCard(foreman);
+  initMemoryCard(foreman);
 }

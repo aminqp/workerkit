@@ -33,6 +33,11 @@ import {
   aggregateResults,
 } from './examples/pipeline-benchmark.worker.ts';
 import { persistentTransform } from './examples/persistent-transform.worker.ts';
+import {
+  generateMemoryData,
+  generateMemoryDataWithPayload,
+  processMemoryData,
+} from './examples/memory-demo.worker.ts';
 
 import { initDemo } from './demo';
 
@@ -192,6 +197,26 @@ const workerConfigs = [
     name: 'persistentTransform',
     role: 'computation',
     func: persistentTransform,
+    maxConcurrency: 1,
+  },
+  {
+    name: 'generateMemoryData',
+    role: 'computation',
+    func: generateMemoryData,
+    memoryOnly: true,
+    maxConcurrency: 1,
+  },
+  {
+    name: 'generateMemoryDataWithPayload',
+    role: 'computation',
+    func: generateMemoryDataWithPayload,
+    memory: true,
+    maxConcurrency: 1,
+  },
+  {
+    name: 'processMemoryData',
+    role: 'computation',
+    func: processMemoryData,
     maxConcurrency: 1,
   },
   {

@@ -58,6 +58,24 @@ export interface WorkerConfig<TFunc extends WorkerFunction = WorkerFunction> {
    * If any dependency fails, this worker will not run.
    */
   dependencies?: Array<() => void>;
+  /**
+   * When `true`, the worker's output is saved in the isolated `MemoryWorker`
+   * and returned alongside a `__memory_ref__` token.
+   */
+  memory?: boolean;
+  /**
+   * When `true`, the worker's output is saved in the isolated `MemoryWorker`
+   * and **only** the `__memory_ref__` token is returned (0 bytes data transferred back to main thread).
+   */
+  memoryOnly?: boolean;
+}
+
+/** Statistics about stored memory handles in MemoryWorker. */
+export interface MemoryStats {
+  /** Total number of active memory references. */
+  count: number;
+  /** Array of active reference IDs. */
+  refs: string[];
 }
 
 /**

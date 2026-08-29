@@ -26,11 +26,12 @@ export type CardId =
   | 'pipeline-bench'
   | 'persistent'
   | 'persistent-bench'
-  | 'bundler';
+  | 'bundler'
+  | 'memory';
 
 export function setStatus(
   id: CardId,
-  state: 'running' | 'done' | 'error' | 'partial',
+  state: 'running' | 'done' | 'error' | 'partial' | 'idle',
   text: string,
 ) {
   const el = document.getElementById(`status-${id}`)!;

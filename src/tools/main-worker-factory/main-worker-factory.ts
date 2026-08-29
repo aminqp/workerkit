@@ -10,9 +10,11 @@ import {
   WorkerResult,
   WorkerReturnType,
   TypedSettledResults,
+  MemoryStats,
 } from './types.ts';
 import { WorkerFactory } from '../worker-factory';
 import { WorkerMode } from '../worker-factory/worker-factory';
+import { MemoryStore } from './memory-store';
 
 /**
  * Recursively collects all Transferable objects from a value.
@@ -44,8 +46,8 @@ export function extractTransferable(
     return value.flatMap((item) => extractTransferable(item, seen));
   }
 
-  return Object.values(value as object).flatMap((v) =>
-    extractTransferable(v, seen),
+  return Object.values(value as object).flatMap((propertyValue) =>
+    extractTransferable(propertyValue, seen),
   );
 }
 
@@ -84,6 +86,7 @@ class MainWorkerFactory<
   private readonly _threads: number;
   private readonly _persistentWorkers: Map<string, Worker> = new Map();
   private readonly _activeWorkers: Set<Worker> = new Set();
+  private readonly _memoryStore: MemoryStore = new MemoryStore();
   private _isTerminated = false;
 
   /**
@@ -167,8 +170,8 @@ class MainWorkerFactory<
     const result: T[][] = [];
     let start = 0;
 
-    for (let i = 0; i < chunks; i++) {
-      const size = chunkSize + (i < remainder ? 1 : 0);
+    for (let chunkIndex = 0; chunkIndex < chunks; chunkIndex++) {
+      const size = chunkSize + (chunkIndex < remainder ? 1 : 0);
       result.push(array.slice(start, start + size));
       start += size;
     }
@@ -183,7 +186,7 @@ class MainWorkerFactory<
    * @returns The matching config, or `undefined` if not found.
    */
   private findWorkerByName(name: string): WorkerConfig | undefined {
-    return this._workers.find((w) => w.name === name);
+    return this._workers.find((worker) => worker.name === name);
   }
 
   /**
@@ -214,13 +217,11 @@ class MainWorkerFactory<
    */
   async runWorker<TName extends keyof WorkerConfigMap<TConfigs> & string>(
     workerName: TName,
-    {
-      srcData,
-      ...otherParams
-    }: { srcData: WorkerDataParam<WorkerConfigMap<TConfigs>[TName]> } & Record<
-      string,
-      unknown
-    >,
+    rawParams: {
+      srcData?: WorkerDataParam<WorkerConfigMap<TConfigs>[TName]>;
+      __memory_ref__?: string;
+      deleteMemory?: boolean;
+    } & Record<string, unknown>,
   ): Promise<
     TypedSettledResults<WorkerReturnType<WorkerConfigMap<TConfigs>[TName]>>
   > {
@@ -231,6 +232,22 @@ class MainWorkerFactory<
     const config = this.findWorkerByName(workerName);
     if (!config)
       return Promise.reject(new Error(`Worker "${workerName}" not found`));
+
+    let { srcData, ...otherParams } = (rawParams || {}) as {
+      srcData?: unknown;
+    } & Record<string, unknown>;
+
+    // Memory Reference Resolution:
+    // If srcData is omitted and __memory_ref__ is present, resolve data from MemoryStore
+    const memoryRef = otherParams.__memory_ref__ as string | undefined;
+    const shouldDeleteMemory = Boolean(otherParams.deleteMemory);
+
+    if (srcData === undefined && memoryRef) {
+      srcData = this._memoryStore.get(memoryRef);
+      if (shouldDeleteMemory) {
+        this._memoryStore.delete(memoryRef);
+      }
+    }
 
     const threadCount = config.maxConcurrency ?? this._threads;
     const shouldPartition = Boolean(Array.isArray(srcData) && config.partition);
@@ -253,7 +270,87 @@ class MainWorkerFactory<
     );
 
     const settled = await Promise.allSettled(promises);
+
+    // Memory Storage Handling:
+    // If worker config specifies memory or memoryOnly, save dataset in MemoryStore
+    if (config.memoryOnly || config.memory) {
+      this.storeWorkerMemoryResult(settled, {
+        memoryOnly: Boolean(config.memoryOnly),
+        shouldPartition,
+      });
+    }
+
     return new TypedSettledResults(settled);
+  }
+
+  /**
+   * Deletes a specific memory reference from the factory's memory store.
+   *
+   * @param ref - The `__memory_ref__` token string to delete.
+   * @returns A promise that resolves to `true` if deleted, `false` otherwise.
+   */
+  async deleteMemory(ref: string): Promise<boolean> {
+    return this._memoryStore.delete(ref);
+  }
+
+  /**
+   * Clears all stored dataset references from the factory's memory store.
+   */
+  async clearMemory(): Promise<void> {
+    this._memoryStore.clear();
+  }
+
+  /**
+   * Saves the output of a completed worker execution into MemoryStore
+   * and modifies the returned settled results with a `__memory_ref__` token.
+   */
+  private storeWorkerMemoryResult(
+    settled: PromiseSettledResult<WorkerResult>[],
+    {
+      memoryOnly,
+      shouldPartition,
+    }: { memoryOnly: boolean; shouldPartition: boolean },
+  ): void {
+    const fulfilledResults = settled.filter(
+      (result): result is PromiseFulfilledResult<WorkerResult> =>
+        result.status === 'fulfilled' && Boolean(result.value.successResult),
+    );
+
+    if (fulfilledResults.length === 0) return;
+
+    // 1. Collect output data from all fulfilled worker threads
+    const shardOutputs = fulfilledResults.map(
+      (result) => result.value.successResult!.data,
+    );
+
+    // 2. Combine shard outputs into a single dataset
+    const combinedOutput =
+      shouldPartition && shardOutputs.every(Array.isArray)
+        ? shardOutputs.flat()
+        : shardOutputs.length === 1
+          ? shardOutputs[0]
+          : shardOutputs;
+
+    // 3. Save combined dataset into MemoryStore and get a reference token
+    const ref = this._memoryStore.set(combinedOutput);
+
+    // 4. Update the event payload returned to the caller
+    for (const res of fulfilledResults) {
+      const newPayload = memoryOnly
+        ? { __memory_ref__: ref }
+        : { data: res.value.successResult!.data, __memory_ref__: ref };
+
+      res.value.successResult = new MessageEvent('message', {
+        data: newPayload,
+      });
+    }
+  }
+
+  /**
+   * Returns statistics about active memory references in the factory.
+   */
+  async getMemoryStats(): Promise<MemoryStats> {
+    return this._memoryStore.stats();
   }
 
   /**
@@ -452,7 +549,7 @@ class MainWorkerFactory<
     T = unknown,
     R = T extends (infer Item)[] ? Item[] : T[],
   >(
-    settled: TypedSettledResults<T>,
+    settled: TypedSettledResults<T> | TypedSettledResults<unknown>,
     options: CollectOptions<T, R> = {},
   ): Promise<CollectedResult<R>> {
     if (this._isTerminated) {
@@ -460,13 +557,42 @@ class MainWorkerFactory<
     }
 
     const fulfilled = settled.results.filter(
-      (r) => r.status === 'fulfilled',
+      (result) => result.status === 'fulfilled',
     ) as PromiseFulfilledResult<WorkerResult>[];
     const errors = settled.results.filter(
-      (r) => r.status === 'rejected',
+      (result) => result.status === 'rejected',
     ) as PromiseRejectedResult[];
 
-    const shards = fulfilled.map((r) => r.value.successResult!.data as T);
+    // If all fulfilled shards returned a memoryOnly reference payload with the same token,
+    // return the single memory reference payload instead of an array of duplicate ref objects.
+    const isMemoryOnlyRef =
+      fulfilled.length > 0 &&
+      fulfilled.every((result) => {
+        const responseData = result.value.successResult?.data as Record<
+          string,
+          unknown
+        >;
+        return (
+          responseData &&
+          typeof responseData === 'object' &&
+          '__memory_ref__' in responseData &&
+          !('data' in responseData)
+        );
+      });
+
+    if (isMemoryOnlyRef) {
+      const firstData = fulfilled[0].value.successResult!.data as R;
+      return {
+        data: firstData,
+        succeeded: fulfilled.length,
+        failed: errors.length,
+        errors,
+      };
+    }
+
+    const shards = fulfilled.map(
+      (result) => result.value.successResult!.data as T,
+    );
 
     // Build a self-contained merge function for the worker
     const reducerSrc = options.reducer
@@ -480,22 +606,22 @@ class MainWorkerFactory<
           try {
             const result = reducer(event.data);
             self.postMessage({ ok: true, data: result });
-          } catch (err) {
-            self.postMessage({ ok: false, error: String(err) });
+          } catch (error) {
+            self.postMessage({ ok: false, error: String(error) });
           }
         });
       `;
       const blob = new Blob([workerSrc], { type: 'application/javascript' });
       const worker = this.trackWorker(new Worker(URL.createObjectURL(blob)));
 
-      worker.onmessage = (e) => {
+      worker.onmessage = (event) => {
         this.terminateWorker(worker);
-        if (e.data.ok) resolve(e.data.data);
-        else reject(new Error(e.data.error));
+        if (event.data.ok) resolve(event.data.data);
+        else reject(new Error(event.data.error));
       };
-      worker.onerror = (e) => {
+      worker.onerror = (event) => {
         this.terminateWorker(worker);
-        reject(e);
+        reject(event);
       };
       worker.postMessage(shards);
     });
@@ -545,21 +671,21 @@ class MainWorkerFactory<
 
     if (steps.length === 1) {
       const step = steps[0];
-      const { worker: _w, srcData, ...stepParams } = step;
+      const { worker: _workerName, srcData, ...stepParams } = step;
       const config = this.findWorkerByName(step.worker);
       if (!config) throw new Error(`Worker "${step.worker}" not found`);
       const worker = this.initWorker(config);
       const raw = worker.getWorker;
 
       return new Promise<TResult>((resolve, reject) => {
-        raw.onmessage = (e) => {
+        raw.onmessage = (event) => {
           this.terminateWorker(raw);
-          if (e.data?.ok === false) reject(new Error(e.data.error));
-          else resolve(e.data?.data as TResult);
+          if (event.data?.ok === false) reject(new Error(event.data.error));
+          else resolve(event.data?.data as TResult);
         };
-        raw.onerror = (e) => {
+        raw.onerror = (event) => {
           this.terminateWorker(raw);
-          reject(e);
+          reject(event);
         };
         const payloadData = srcData ?? {};
         const payload = { data: payloadData, ...stepParams, index: 0 };
@@ -588,79 +714,100 @@ class MainWorkerFactory<
       }
 
       // Create channels between adjacent workers
-      for (let i = 0; i < workers.length - 1; i++) {
+      for (
+        let channelIndex = 0;
+        channelIndex < workers.length - 1;
+        channelIndex++
+      ) {
         channels.push(new MessageChannel());
       }
 
       // Wire up: each worker (except last) gets an output port
       // Each worker (except first) gets an input port
-      for (let i = 0; i < workers.length; i++) {
-        const { worker: _w, srcData: _s, ...stepParams } = steps[i];
+      for (let stepIndex = 0; stepIndex < workers.length; stepIndex++) {
+        const {
+          worker: _workerName,
+          srcData: _sourceData,
+          ...stepParams
+        } = steps[stepIndex];
         const transferList: Transferable[] = [];
         const ports: { inputPort?: MessagePort; outputPort?: MessagePort } = {};
 
-        if (i > 0) {
+        if (stepIndex > 0) {
           // Receive input from previous worker's channel
-          ports.inputPort = channels[i - 1].port1;
+          ports.inputPort = channels[stepIndex - 1].port1;
           transferList.push(ports.inputPort);
         }
 
-        if (i < workers.length - 1) {
+        if (stepIndex < workers.length - 1) {
           // Send output to next worker's channel
-          ports.outputPort = channels[i].port2;
+          ports.outputPort = channels[stepIndex].port2;
           transferList.push(ports.outputPort);
         }
 
         // Send ports to the worker for pipeline wiring
-        workers[i].postMessage(
+        workers[stepIndex].postMessage(
           { __pipeline_ports__: true, stepParams, ...ports },
           transferList,
         );
 
         // Fallback relay for plain native workers that post messages to the main thread
-        if (i < workers.length - 1) {
-          const currentWorker = workers[i];
-          const nextWorker = workers[i + 1];
-          const { worker: _w, srcData: _s, ...nextParams } = steps[i + 1];
+        if (stepIndex < workers.length - 1) {
+          const currentWorker = workers[stepIndex];
+          const nextWorker = workers[stepIndex + 1];
+          const {
+            worker: _nextWorkerName,
+            srcData: _nextSourceData,
+            ...nextParams
+          } = steps[stepIndex + 1];
 
-          currentWorker.onmessage = (e) => {
-            if (e.data && e.data.__pipeline_ports__) return;
+          currentWorker.onmessage = (event) => {
+            if (event.data && event.data.__pipeline_ports__) return;
 
-            if (e.data?.ok === false) {
-              workers.forEach((w) => this.terminateWorker(w));
-              reject(new Error(e.data.error));
+            if (event.data?.ok === false) {
+              workers.forEach((worker) => this.terminateWorker(worker));
+              reject(new Error(event.data.error));
               return;
             }
 
-            const payloadData = e.data?.ok !== undefined ? e.data.data : e.data;
+            const payloadData =
+              event.data?.ok !== undefined ? event.data.data : event.data;
             const payload = { data: payloadData, ...nextParams, index: 0 };
             nextWorker.postMessage(payload, extractTransferable(payload));
           };
 
-          currentWorker.onerror = (e) => {
-            workers.forEach((w) => this.terminateWorker(w));
-            reject(e);
+          currentWorker.onerror = (event) => {
+            workers.forEach((worker) => this.terminateWorker(worker));
+            reject(event);
           };
         }
       }
 
       // Listen for the final worker's result
       const lastWorker = workers[workers.length - 1];
-      lastWorker.onmessage = (e) => {
+      lastWorker.onmessage = (event) => {
         // Terminate all workers
-        workers.forEach((w) => this.terminateWorker(w));
-        if (e.data?.ok === false) reject(new Error(e.data.error));
-        else resolve(e.data?.data as TResult);
+        workers.forEach((worker) => this.terminateWorker(worker));
+        if (event.data?.ok === false) reject(new Error(event.data.error));
+        else resolve(event.data?.data as TResult);
       };
-      lastWorker.onerror = (e) => {
-        workers.forEach((w) => this.terminateWorker(w));
-        reject(e);
+      lastWorker.onerror = (event) => {
+        workers.forEach((worker) => this.terminateWorker(worker));
+        reject(event);
       };
 
       // Kick off the first worker with srcData and stepParams
-      const { worker: _w0, srcData: s0Data, ...s0Params } = steps[0];
-      const firstPayloadData = s0Data ?? {};
-      const firstPayload = { data: firstPayloadData, ...s0Params, index: 0 };
+      const {
+        worker: _firstWorkerName,
+        srcData: initialData,
+        ...initialParams
+      } = steps[0];
+      const firstPayloadData = initialData ?? {};
+      const firstPayload = {
+        data: firstPayloadData,
+        ...initialParams,
+        index: 0,
+      };
       workers[0].postMessage(firstPayload, extractTransferable(firstPayload));
     });
   }
@@ -722,15 +869,15 @@ class MainWorkerFactory<
     }
 
     return new Promise<TResult>((resolve, reject) => {
-      raw!.onmessage = (e) => {
-        if (e.data?.ok === false) {
-          reject(new Error(e.data.error));
+      raw!.onmessage = (event) => {
+        if (event.data?.ok === false) {
+          reject(new Error(event.data.error));
         } else {
-          resolve(e.data?.data as TResult);
+          resolve(event.data?.data as TResult);
         }
       };
-      raw!.onerror = (e) => {
-        reject(e);
+      raw!.onerror = (event) => {
+        reject(event);
       };
 
       const message: { type: string; config: unknown; dataset?: unknown } = {
@@ -789,6 +936,7 @@ class MainWorkerFactory<
       this.terminateWorker(worker);
     }
     this._activeWorkers.clear();
+    this._memoryStore.clear();
   }
 
   /**

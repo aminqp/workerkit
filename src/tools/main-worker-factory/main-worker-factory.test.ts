@@ -69,8 +69,8 @@ function makeFactory(configs: WorkerConfig[]) {
 async function autoRespond(data: unknown = { result: 'ok' }) {
   // flush microtasks so workers are registered, then respond
   await Promise.resolve();
-  workerInstances.forEach((w) => {
-    if (!w.terminate.mock.calls.length) w.respond(data);
+  workerInstances.forEach((worker) => {
+    if (!worker.terminate.mock.calls.length) worker.respond(data);
   });
 }
 
@@ -199,7 +199,9 @@ describe('runWorker – positive', () => {
     await autoRespond();
     await promise;
 
-    workerInstances.forEach((w) => expect(w.terminate).toHaveBeenCalled());
+    workerInstances.forEach((worker) =>
+      expect(worker.terminate).toHaveBeenCalled(),
+    );
   });
 
   it('partitions array data across workers', async () => {
@@ -217,7 +219,9 @@ describe('runWorker – positive', () => {
     await autoRespond();
     await promise;
 
-    const messages = workerInstances.map((w) => w.postMessage.mock.calls[0][0]);
+    const messages = workerInstances.map(
+      (worker) => worker.postMessage.mock.calls[0][0],
+    );
     expect(messages[0]).toMatchObject({ data: [1, 2] });
     expect(messages[1]).toMatchObject({ data: [3, 4] });
   });
@@ -239,8 +243,8 @@ describe('runWorker – positive', () => {
     await promise;
 
     // both workers receive the full array
-    workerInstances.forEach((w) =>
-      expect(w.postMessage).toHaveBeenCalledWith(
+    workerInstances.forEach((worker) =>
+      expect(worker.postMessage).toHaveBeenCalledWith(
         expect.objectContaining({ data: arr }),
         expect.any(Array),
       ),
@@ -415,8 +419,8 @@ describe('runWorker – edge cases', () => {
     await autoRespond();
     await promise;
 
-    workerInstances.forEach((w) =>
-      expect(w.postMessage).toHaveBeenCalledWith(
+    workerInstances.forEach((worker) =>
+      expect(worker.postMessage).toHaveBeenCalledWith(
         expect.objectContaining({ data: { scalar: true } }),
         expect.any(Array),
       ),
@@ -453,8 +457,11 @@ describe('runWorker – edge cases', () => {
     const results = await promise;
 
     const indices = results.results
-      .filter((r) => r.status === 'fulfilled')
-      .map((r) => (r as PromiseFulfilledResult<WorkerResult>).value.index);
+      .filter((result) => result.status === 'fulfilled')
+      .map(
+        (result) =>
+          (result as PromiseFulfilledResult<WorkerResult>).value.index,
+      );
 
     expect(indices).toEqual([0, 1, 2]);
   });
@@ -590,8 +597,8 @@ describe('pipeline', () => {
 
     await promise;
 
-    workerInstances.forEach((w) => {
-      expect(w.terminate).toHaveBeenCalled();
+    workerInstances.forEach((worker) => {
+      expect(worker.terminate).toHaveBeenCalled();
     });
   });
 
@@ -656,8 +663,8 @@ describe('pipeline', () => {
 
     await expect(promise).rejects.toThrow('transform failed');
 
-    workerInstances.forEach((w) => {
-      expect(w.terminate).toHaveBeenCalled();
+    workerInstances.forEach((worker) => {
+      expect(worker.terminate).toHaveBeenCalled();
     });
   });
 
@@ -923,12 +930,15 @@ describe('release', () => {
   it('terminates the persistent worker', async () => {
     const factory = makeFactory([{ name: 'w1', role: 'compute', func: noop }]);
 
-    const p = factory.runPersistent('w1', { dataset: [1], config: {} });
+    const persistentPromise = factory.runPersistent('w1', {
+      dataset: [1],
+      config: {},
+    });
     await Promise.resolve();
     workerInstances[0].onmessage?.(
       new MessageEvent('message', { data: { ok: true, data: 'done' } }),
     );
-    await p;
+    await persistentPromise;
 
     factory.release('w1');
 
@@ -938,12 +948,15 @@ describe('release', () => {
   it('sends release message before terminating', async () => {
     const factory = makeFactory([{ name: 'w1', role: 'compute', func: noop }]);
 
-    const p = factory.runPersistent('w1', { dataset: [1], config: {} });
+    const persistentPromise = factory.runPersistent('w1', {
+      dataset: [1],
+      config: {},
+    });
     await Promise.resolve();
     workerInstances[0].onmessage?.(
       new MessageEvent('message', { data: { ok: true, data: 'done' } }),
     );
-    await p;
+    await persistentPromise;
 
     factory.release('w1');
 
@@ -1096,8 +1109,8 @@ describe('MainWorkerFactory – createWorker support', () => {
       factory.terminate();
 
       expect(factory.isTerminated).toBe(true);
-      workerInstances.forEach((w) => {
-        expect(w.terminate).toHaveBeenCalled();
+      workerInstances.forEach((worker) => {
+        expect(worker.terminate).toHaveBeenCalled();
       });
     });
 
@@ -1112,8 +1125,8 @@ describe('MainWorkerFactory – createWorker support', () => {
       factory.destroy();
 
       expect(factory.isTerminated).toBe(true);
-      workerInstances.forEach((w) => {
-        expect(w.terminate).toHaveBeenCalled();
+      workerInstances.forEach((worker) => {
+        expect(worker.terminate).toHaveBeenCalled();
       });
     });
 
@@ -1173,6 +1186,259 @@ describe('MainWorkerFactory – createWorker support', () => {
 
       factory.restart();
       expect(factory.isTerminated).toBe(false);
+    });
+  });
+
+  // ── Memory Management ───────────────────────────────────────────────────────
+
+  describe('Memory Management (memory & memoryOnly)', () => {
+    it('returns data + __memory_ref__ when memory: true is configured', async () => {
+      const factory = makeFactory([
+        {
+          name: 'w1',
+          role: 'compute',
+          func: noop,
+          memory: true,
+          maxConcurrency: 1,
+        },
+      ]);
+
+      const promise = factory.runWorker('w1', { srcData: { count: 10 } });
+      await autoRespond({ numbers: [1, 2, 3] });
+      const res = await promise;
+
+      const fulfilled = res.results[0] as PromiseFulfilledResult<WorkerResult>;
+      const payload = fulfilled.value.successResult!.data as {
+        data: unknown;
+        __memory_ref__: string;
+      };
+
+      expect(payload.data).toEqual({ numbers: [1, 2, 3] });
+      expect(payload.__memory_ref__).toMatch(/^mem_/);
+
+      const stats = await factory.getMemoryStats();
+      expect(stats.count).toBe(1);
+      expect(stats.refs).toContain(payload.__memory_ref__);
+    });
+
+    it('returns ONLY __memory_ref__ when memoryOnly: true is configured', async () => {
+      const factory = makeFactory([
+        {
+          name: 'w1',
+          role: 'compute',
+          func: noop,
+          memoryOnly: true,
+          maxConcurrency: 1,
+        },
+      ]);
+
+      const promise = factory.runWorker('w1', { srcData: { count: 10 } });
+      await autoRespond({ numbers: [100, 200] });
+      const res = await promise;
+
+      const fulfilled = res.results[0] as PromiseFulfilledResult<WorkerResult>;
+      const payload = fulfilled.value.successResult!.data as Record<
+        string,
+        unknown
+      >;
+
+      expect(payload.data).toBeUndefined();
+      expect(payload.__memory_ref__).toMatch(/^mem_/);
+
+      const stats = await factory.getMemoryStats();
+      expect(stats.count).toBe(1);
+    });
+
+    it('resolves __memory_ref__ transparently for consumer worker when srcData is omitted', async () => {
+      const factory = makeFactory([
+        {
+          name: 'producer',
+          role: 'compute',
+          func: noop,
+          memoryOnly: true,
+          maxConcurrency: 1,
+        },
+        { name: 'consumer', role: 'transform', func: noop, maxConcurrency: 1 },
+      ]);
+
+      // Step 1: Run producer
+      const prodPromise = factory.runWorker('producer', {
+        srcData: { count: 5 },
+      });
+      await autoRespond({ items: ['a', 'b', 'c'] });
+      const prodRes = await prodPromise;
+      const ref = (prodRes.results[0] as PromiseFulfilledResult<WorkerResult>)
+        .value.successResult!.data.__memory_ref__;
+
+      // Step 2: Run consumer passing __memory_ref__
+      const consPromise = factory.runWorker('consumer', {
+        __memory_ref__: ref,
+      });
+      await Promise.resolve();
+
+      // Check worker instance received resolved dataset as srcData (data field in payload)
+      const consumerWorkerInstance =
+        workerInstances[workerInstances.length - 1];
+      expect(consumerWorkerInstance.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: { items: ['a', 'b', 'c'] },
+        }),
+        expect.any(Array),
+      );
+
+      await autoRespond({ status: 'done' });
+      await consPromise;
+    });
+
+    it('deletes memory reference after resolution if deleteMemory: true is passed', async () => {
+      const factory = makeFactory([
+        {
+          name: 'producer',
+          role: 'compute',
+          func: noop,
+          memoryOnly: true,
+          maxConcurrency: 1,
+        },
+        { name: 'consumer', role: 'transform', func: noop, maxConcurrency: 1 },
+      ]);
+
+      const prodPromise = factory.runWorker('producer', {
+        srcData: { count: 5 },
+      });
+      await autoRespond({ secret: 'data' });
+      const prodRes = await prodPromise;
+      const ref = (prodRes.results[0] as PromiseFulfilledResult<WorkerResult>)
+        .value.successResult!.data.__memory_ref__;
+
+      // Consumer runs with deleteMemory: true
+      const consPromise = factory.runWorker('consumer', {
+        __memory_ref__: ref,
+        deleteMemory: true,
+      });
+      await autoRespond({ status: 'done' });
+      await consPromise;
+
+      // Check memory reference was removed
+      const stats = await factory.getMemoryStats();
+      expect(stats.count).toBe(0);
+    });
+
+    it('ignores __memory_ref__ if explicit srcData is provided', async () => {
+      const factory = makeFactory([
+        {
+          name: 'producer',
+          role: 'compute',
+          func: noop,
+          memoryOnly: true,
+          maxConcurrency: 1,
+        },
+        { name: 'consumer', role: 'transform', func: noop, maxConcurrency: 1 },
+      ]);
+
+      const prodPromise = factory.runWorker('producer', { srcData: {} });
+      await autoRespond({ stored: 'oldData' });
+      const prodRes = await prodPromise;
+      const ref = (prodRes.results[0] as PromiseFulfilledResult<WorkerResult>)
+        .value.successResult!.data.__memory_ref__;
+
+      // Consumer passes BOTH srcData AND __memory_ref__
+      const consPromise = factory.runWorker('consumer', {
+        srcData: { explicit: 'newData' },
+        __memory_ref__: ref,
+      });
+      await Promise.resolve();
+
+      const consumerWorkerInstance =
+        workerInstances[workerInstances.length - 1];
+      expect(consumerWorkerInstance.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: { explicit: 'newData' },
+        }),
+        expect.any(Array),
+      );
+
+      await autoRespond({ status: 'done' });
+      await consPromise;
+    });
+
+    it('supports deleteMemory and clearMemory API calls', async () => {
+      const factory = makeFactory([
+        {
+          name: 'w1',
+          role: 'compute',
+          func: noop,
+          memoryOnly: true,
+          maxConcurrency: 1,
+        },
+      ]);
+
+      const promise = factory.runWorker('w1', { srcData: {} });
+      await autoRespond({ val: 123 });
+      const res = await promise;
+      const ref = (res.results[0] as PromiseFulfilledResult<WorkerResult>).value
+        .successResult!.data.__memory_ref__;
+
+      expect((await factory.getMemoryStats()).count).toBe(1);
+
+      const deleted = await factory.deleteMemory(ref);
+      expect(deleted).toBe(true);
+      expect((await factory.getMemoryStats()).count).toBe(0);
+
+      // Re-run and test clearMemory
+      const promise2 = factory.runWorker('w1', { srcData: {} });
+      await autoRespond({ val: 456 });
+      await promise2;
+      expect((await factory.getMemoryStats()).count).toBe(1);
+
+      await factory.clearMemory();
+      expect((await factory.getMemoryStats()).count).toBe(0);
+    });
+
+    it('flattens array shards and deduplicates refs when partition: true & maxConcurrency > 1 are used with memory', async () => {
+      const factory = makeFactory([
+        {
+          name: 'partitionedProducer',
+          role: 'compute',
+          func: noop,
+          partition: true,
+          memoryOnly: true,
+          maxConcurrency: 2,
+        },
+        {
+          name: 'partitionedConsumer',
+          role: 'transform',
+          func: noop,
+          partition: true,
+          maxConcurrency: 2,
+        },
+      ]);
+
+      // 1. Run producer on 2 threads
+      const prodPromise = factory.runWorker('partitionedProducer', {
+        srcData: [1, 2, 3, 4],
+      });
+      await autoRespond([10, 20]); // Shard 0 output
+      await autoRespond([30, 40]); // Shard 1 output
+      const prodRes = await prodPromise;
+
+      const collectedProd = await factory.collectResults(prodRes);
+      // Expect single ref returned (not an array of 2 duplicate refs)
+      const ref = (collectedProd.data as unknown as { __memory_ref__: string })
+        .__memory_ref__;
+      expect(ref).toMatch(/^mem_/);
+
+      // 2. Run consumer on 2 threads passing the ref
+      const consPromise = factory.runWorker('partitionedConsumer', {
+        __memory_ref__: ref,
+        deleteMemory: true,
+      });
+      await autoRespond([100, 200]); // Consumer Shard 0
+      await autoRespond([300, 400]); // Consumer Shard 1
+      const consRes = await consPromise;
+
+      const collectedCons = await factory.collectResults(consRes);
+      // Consumer output should be flattened cleanly without duplication
+      expect(collectedCons.data).toEqual([100, 200, 300, 400]);
     });
   });
 });
