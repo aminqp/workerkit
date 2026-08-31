@@ -23,7 +23,12 @@ export interface LogReport {
 /**
  * Generates a realistic server log dataset.
  */
-export function generateLogs({ count }: { count: number }): LogEntry[] {
+export function generateLogs({
+  data,
+}: {
+  data: { count: number };
+}): LogEntry[] {
+  const { count } = data ?? { count: 0 };
   const services = [
     'auth-service',
     'payment-api',

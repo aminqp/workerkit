@@ -46,7 +46,6 @@ export function initMemoryCard(foreman: Foreman) {
         // Step 2: Run consumer worker passing __memory_ref__ and deleteMemory: true
         const processRes = await foreman.runWorker('processMemoryData', {
           __memory_ref__: ref,
-          deleteMemory: true,
           options: { multiplier: 3 },
         });
 

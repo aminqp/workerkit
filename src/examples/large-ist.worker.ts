@@ -39,10 +39,11 @@ export interface Options {
  * @returns Array of test items matching the ItemData interface
  */
 export function generateListTransformArrayTestData({
-  count,
+  data,
 }: {
-  count: number;
+  data: { count: number };
 }): ItemData[] {
+  const { count } = data ?? { count: 0 };
   // Sample data pools for random selection
   const firstNames = [
     'john',

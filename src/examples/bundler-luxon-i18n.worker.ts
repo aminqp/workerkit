@@ -28,8 +28,12 @@ export interface TransformedItem {
   transformedValue: number;
 }
 
-export default defineWorker(async (payload: DataPayload) => {
-  const data = payload ?? ({} as DataPayload);
+/**
+ * MainWorkerFactory wraps `srcData` under the `data` key before posting to the
+ * worker thread, so the `defineWorker` callback receives `{ data: DataPayload, index }`.
+ */
+export default defineWorker(async (payload: { data: DataPayload }) => {
+  const data = payload.data ?? (payload as unknown as DataPayload);
 
   // Artificial delay to make worker execution visibly active in DevTools and UI
   const delay = data.delayMs ?? 1500;

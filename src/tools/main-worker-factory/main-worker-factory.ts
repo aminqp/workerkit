@@ -243,10 +243,16 @@ class MainWorkerFactory<
     const shouldDeleteMemory = Boolean(otherParams.deleteMemory);
 
     if (srcData === undefined && memoryRef) {
-      srcData = this._memoryStore.get(memoryRef);
-      if (shouldDeleteMemory) {
-        this._memoryStore.delete(memoryRef);
+      if (!this._memoryStore.has(memoryRef)) {
+        return Promise.reject(
+          new Error(`Memory reference "${memoryRef}" not found in MemoryStore`),
+        );
       }
+      srcData = this._memoryStore.get(memoryRef);
+      delete otherParams.__memory_ref__;
+      delete otherParams.deleteMemory;
+    } else {
+      delete otherParams.deleteMemory;
     }
 
     const threadCount = config.maxConcurrency ?? this._threads;
@@ -270,6 +276,11 @@ class MainWorkerFactory<
     );
 
     const settled = await Promise.allSettled(promises);
+
+    // Deferred Memory Reference Deletion:
+    if (shouldDeleteMemory && memoryRef) {
+      this._memoryStore.delete(memoryRef);
+    }
 
     // Memory Storage Handling:
     // If worker config specifies memory or memoryOnly, save dataset in MemoryStore
@@ -489,6 +500,9 @@ class MainWorkerFactory<
           });
           return;
         }
+        const payloadData =
+          event.data?.ok !== undefined ? event.data.data : event.data;
+
         resolve({
           index,
           workerConfigs: {
@@ -499,7 +513,7 @@ class MainWorkerFactory<
             data,
           },
           successResult: new MessageEvent('message', {
-            data: event.data?.data,
+            data: payloadData,
           }),
         });
         this.terminateWorker(raw);
@@ -590,44 +604,101 @@ class MainWorkerFactory<
       };
     }
 
-    const shards = fulfilled.map(
-      (result) => result.value.successResult!.data as T,
-    );
+    // Check if memory ref payload with data (memory: true)
+    const isMemoryRefWithData =
+      fulfilled.length > 0 &&
+      fulfilled.every((result) => {
+        const responseData = result.value.successResult?.data as Record<
+          string,
+          unknown
+        >;
+        return (
+          responseData &&
+          typeof responseData === 'object' &&
+          '__memory_ref__' in responseData &&
+          'data' in responseData
+        );
+      });
+
+    const memoryRefToken = isMemoryRefWithData
+      ? ((fulfilled[0].value.successResult!.data as { __memory_ref__: string })
+          .__memory_ref__ as string)
+      : undefined;
+
+    const shards = fulfilled.map((result) => {
+      const responseData = result.value.successResult!.data;
+      if (
+        isMemoryRefWithData &&
+        responseData &&
+        typeof responseData === 'object' &&
+        'data' in responseData
+      ) {
+        return (responseData as { data: T }).data;
+      }
+      return responseData as T;
+    });
 
     // Build a self-contained merge function for the worker
     const reducerSrc = options.reducer
       ? options.reducer.toString()
       : '(shards) => shards.flat()';
 
-    const mergeResult = await new Promise<R>((resolve, reject) => {
-      const workerSrc = `
-        const reducer = ${reducerSrc};
-        self.addEventListener('message', (event) => {
-          try {
-            const result = reducer(event.data);
-            self.postMessage({ ok: true, data: result });
-          } catch (error) {
-            self.postMessage({ ok: false, error: String(error) });
-          }
-        });
-      `;
-      const blob = new Blob([workerSrc], { type: 'application/javascript' });
-      const worker = this.trackWorker(new Worker(URL.createObjectURL(blob)));
+    let mergeResult: R;
 
-      worker.onmessage = (event) => {
-        this.terminateWorker(worker);
-        if (event.data.ok) resolve(event.data.data);
-        else reject(new Error(event.data.error));
-      };
-      worker.onerror = (event) => {
-        this.terminateWorker(worker);
-        reject(event);
-      };
-      worker.postMessage(shards);
-    });
+    if (
+      typeof Worker !== 'undefined' &&
+      typeof Blob !== 'undefined' &&
+      typeof URL !== 'undefined' &&
+      typeof URL.createObjectURL === 'function'
+    ) {
+      try {
+        mergeResult = await new Promise<R>((resolve, reject) => {
+          const workerSrc = `
+            const reducer = ${reducerSrc};
+            self.addEventListener('message', (event) => {
+              try {
+                const result = reducer(event.data);
+                self.postMessage({ ok: true, data: result });
+              } catch (error) {
+                self.postMessage({ ok: false, error: String(error) });
+              }
+            });
+          `;
+          const blob = new Blob([workerSrc], {
+            type: 'application/javascript',
+          });
+          const worker = this.trackWorker(
+            new Worker(URL.createObjectURL(blob)),
+          );
+
+          worker.onmessage = (event) => {
+            this.terminateWorker(worker);
+            if (event.data.ok) resolve(event.data.data);
+            else reject(new Error(event.data.error));
+          };
+          worker.onerror = (event) => {
+            this.terminateWorker(worker);
+            reject(event);
+          };
+          worker.postMessage(shards);
+        });
+      } catch {
+        const defaultReducer = (s: unknown[]) => (s as unknown[][]).flat();
+        const reducer = options.reducer ?? defaultReducer;
+        mergeResult = reducer(shards as T[]) as R;
+      }
+    } else {
+      const defaultReducer = (s: unknown[]) => (s as unknown[][]).flat();
+      const reducer = options.reducer ?? defaultReducer;
+      mergeResult = reducer(shards as T[]) as R;
+    }
+
+    const finalData = isMemoryRefWithData
+      ? ({ data: mergeResult, __memory_ref__: memoryRefToken } as unknown as R)
+      : mergeResult;
 
     return {
-      data: mergeResult,
+      data: finalData,
       succeeded: fulfilled.length,
       failed: errors.length,
       errors,
@@ -802,7 +873,32 @@ class MainWorkerFactory<
         srcData: initialData,
         ...initialParams
       } = steps[0];
-      const firstPayloadData = initialData ?? {};
+
+      let firstPayloadData = initialData;
+      const memoryRef = initialParams.__memory_ref__ as string | undefined;
+      const shouldDeleteMemory = Boolean(initialParams.deleteMemory);
+
+      if (firstPayloadData === undefined && memoryRef) {
+        if (!this._memoryStore.has(memoryRef)) {
+          workers.forEach((w) => this.terminateWorker(w));
+          reject(
+            new Error(
+              `Memory reference "${memoryRef}" not found in MemoryStore`,
+            ),
+          );
+          return;
+        }
+        firstPayloadData = this._memoryStore.get(memoryRef);
+        if (shouldDeleteMemory) {
+          this._memoryStore.delete(memoryRef);
+        }
+        delete initialParams.__memory_ref__;
+        delete initialParams.deleteMemory;
+      }
+      if (firstPayloadData === undefined) {
+        firstPayloadData = {};
+      }
+
       const firstPayload = {
         data: firstPayloadData,
         ...initialParams,
