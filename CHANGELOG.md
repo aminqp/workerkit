@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.14.1](https://github.com/aminqp/workerkit/compare/v0.14.0...v0.14.1) (2026-08-31)
+
+### Bug Fixes
+
+- implement dynamic thread scaling for partitioned workers based on chunk count ([8018b33](https://github.com/aminqp/workerkit/commit/8018b33aa3b5825c545ca3a65585e481181ce3d3))
+
+### Features
+
+- add collectResults method and improve worker error handling and lifecycle management ([5f33b03](https://github.com/aminqp/workerkit/commit/5f33b0363400f705d23ab572b67997eda4436bb7))
+- implement transparent memory reference passing for offloading large datasets between workers ([9d985e1](https://github.com/aminqp/workerkit/commit/9d985e14822cfa41f1e60dae01d0b4c01519b5e5))
+
 # [0.14.0](https://github.com/aminqp/workerkit/compare/v0.13.0...v0.14.0) (2026-08-14)
 
 ### Features
