@@ -4,8 +4,7 @@ import type {
   WorkerFunction,
 } from '../tools/main-worker-factory/types';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type AnyConfigs = readonly WorkerConfig<WorkerFunction<any, any>>[];
+type AnyConfigs = readonly WorkerConfig<WorkerFunction<unknown, unknown>>[];
 export type Foreman = InstanceType<typeof MainWorkerFactory<AnyConfigs>>;
 
 export type CardId =

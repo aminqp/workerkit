@@ -65,6 +65,8 @@
   },
   "devDependencies": {
     "@release-it/conventional-changelog": "11.0.0",
+    "@types/luxon": "^3.7.2",
+    "@types/node": "^26.4.0",
     "@typescript-eslint/eslint-plugin": "^8.58.2",
     "@typescript-eslint/parser": "^8.58.2",
     "date-fns": "^4.1.0",
@@ -74,16 +76,15 @@
     "eslint-plugin-local-rules": "^3.0.2",
     "eslint-plugin-prettier": "^5.5.5",
     "husky": "^9.1.7",
+    "i18next": "^25.5.1",
     "jsdom": "^24.0.0",
     "lint-staged": "^16.4.0",
+    "luxon": "^3.7.2",
     "prettier": "^3.4.2",
     "release-it": "19.0.3",
     "typescript": "^5.7.2",
     "vite": "^6.3.3",
     "vite-plugin-dts": "^4.5.4",
-    "vitest": "^1.0.0",
-    "luxon": "^3.7.2",
-    "i18next": "^25.5.1",
-    "@types/luxon": "^3.7.2"
+    "vitest": "^1.0.0"
   }
 }

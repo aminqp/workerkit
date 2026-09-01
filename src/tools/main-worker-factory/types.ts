@@ -89,8 +89,7 @@ export interface MemoryStats {
  * @typeParam T - The readonly tuple of `WorkerConfig` values.
  */
 export type WorkerConfigMap<
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  T extends readonly WorkerConfig<WorkerFunction<any, any>>[],
+  T extends readonly WorkerConfig<WorkerFunction<unknown, unknown>>[],
 > = {
   [K in T[number]['name']]: NonNullable<
     Extract<T[number], { name: K }>['func']
