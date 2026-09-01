@@ -9,6 +9,14 @@ import {
 import { partitionArray } from '../partition-array';
 import { RunWorkerContext } from './types';
 
+/**
+ * Processes successful worker results, stores them in the MemoryStore, and mutates
+ * the original PromiseSettledResult objects to contain references to the cached data.
+ *
+ * @param settled - Array of settled promise results from worker executions.
+ * @param options - Configuration options for memory storage and partitioning.
+ * @param context - The execution context, containing the MemoryStore.
+ */
 export function storeWorkerMemoryResult(
   settled: PromiseSettledResult<WorkerResult>[],
   {
@@ -48,6 +56,16 @@ export function storeWorkerMemoryResult(
   }
 }
 
+/**
+ * Executes a specific worker with the provided parameters, optionally handling partitioning
+ * and data resolution from the memory store.
+ *
+ * @param workerName - The name of the worker to execute (from configured workers).
+ * @param rawParams - The parameters to pass to the worker, including optional `srcData` and memory options.
+ * @param context - The execution context (provides orchestrator, logger, memory store).
+ * @returns A TypedSettledResults instance containing the settled promises of all worker threads.
+ * @throws {Error} If the worker factory is terminated or the worker is not found.
+ */
 export async function executeWorker<
   TConfigs extends readonly WorkerConfig[],
   TName extends keyof WorkerConfigMap<TConfigs> & string,

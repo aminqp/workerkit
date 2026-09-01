@@ -7,6 +7,16 @@ import { WorkerFactory } from '../worker-factory';
 import { extractTransferable } from '../extract-transferable';
 import { OrchestratorContext } from './types';
 
+/**
+ * WorkerOrchestrator manages the lifecycle and execution of dynamically spawned Web Workers.
+ *
+ * Responsibilities:
+ * - Spawns requested worker instances based on a provided configuration.
+ * - Slices and partitions data payloads (if `isPartitioned` is true) to distribute work.
+ * - Handles auto-retries for failing workers without bubbling up errors prematurely.
+ * - Integrates with the context to track active workers and safely clean them up upon completion.
+ * - Standardizes the result wrapping into structured `WorkerResult` objects.
+ */
 export class WorkerOrchestrator {
   constructor(private context: OrchestratorContext) {}
 

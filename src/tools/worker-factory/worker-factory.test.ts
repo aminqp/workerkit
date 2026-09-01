@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest';
 import type { WorkerFunction } from '../main-worker-factory/types';
 
 // ---------------------------------------------------------------------------
@@ -6,8 +6,8 @@ import type { WorkerFunction } from '../main-worker-factory/types';
 // ---------------------------------------------------------------------------
 
 type WorkerMock = {
-  postMessage: ReturnType<typeof vi.fn>;
-  terminate: ReturnType<typeof vi.fn>;
+  postMessage: Mock;
+  terminate: Mock;
   onmessage: ((e: MessageEvent) => void) | null;
   onerror: ((e: ErrorEvent) => void) | null;
 };
@@ -52,7 +52,7 @@ beforeEach(() => {
   blobParts.length = 0;
   MockWorker.mockClear();
   BlobSpy.mockClear();
-  (URL.createObjectURL as ReturnType<typeof vi.fn>).mockClear();
+  (URL.createObjectURL as Mock).mockClear();
 });
 
 // ── positive tests ──────────────────────────────────────────────────────────

@@ -2,22 +2,32 @@ import { extractTransferable } from '../extract-transferable';
 import { WorkerFunction } from '../main-worker-factory/types';
 
 /**
- * Defines and exports a function to run inside a native Web Worker script,
- * providing full compatibility with `MainWorkerFactory` features including
- * standard runs, worker-to-worker pipelines (`foreman.pipeline()`), and
- * dataset caching (`foreman.runPersistent()`).
+ * Defines a function to run inside a native Web Worker script, establishing
+ * a standard messaging interface that provides full compatibility with `MainWorkerFactory`.
  *
- * @typeParam TParams - The type of the payload sent to the worker.
- * @typeParam TResult - The return type of the worker function.
+ * This helper wraps your worker logic and automatically handles:
+ * - Standard single-execution runs (`foreman.run()`).
+ * - Worker-to-worker message passing in pipelines (`foreman.pipeline()`).
+ * - Dataset caching and persistent state (`foreman.runPersistent()`).
+ * - Extracting and passing transferable objects (like `ArrayBuffer` or `MessagePort`)
+ *   automatically to optimize memory usage without structured cloning overhead.
+ * - Catching synchronous and asynchronous errors and formatting them for the main thread.
  *
- * @param workerFn - The worker execution function.
+ * @typeParam TParams - The type of the payload/parameters sent to the worker.
+ *                      It typically includes a `data` field alongside optional configurations.
+ * @typeParam TResult - The return type of the worker function. Can be a promise or a direct value.
+ *
+ * @param workerFn - The function containing the worker's execution logic. It takes the parsed
+ *                   payload and returns the computed result (or a Promise resolving to it).
  *
  * @example
  * // my-native-worker.ts
  * import { defineWorker } from '@offmain/workerkit';
  *
- * export default defineWorker(async ({ data }: { data: number[] }) => {
- *   return data.map((x) => x * 2);
+ * // This worker function is compatible with standard runs and pipelines
+ * export default defineWorker(async ({ data, options }: { data: number[], options?: { mult?: number } }) => {
+ *   const mult = options?.mult ?? 2;
+ *   return data.map((x) => x * mult);
  * });
  */
 export function defineWorker<TParams = unknown, TResult = unknown>(

@@ -3,6 +3,19 @@ import { WorkerMode } from '../worker-factory/worker-factory';
 import { extractTransferable } from '../extract-transferable';
 import { PersistentManagerContext } from './types';
 
+/**
+ * PersistentWorkerManager handles Web Workers that remain alive across multiple executions.
+ *
+ * Unlike transient workers which are terminated after a single run, persistent workers
+ * maintain their internal state and memory context. This makes them ideal for tasks that
+ * require heavy initialization, database connections, or large datasets.
+ *
+ * Responsibilities:
+ * - Lazily instantiates persistent workers on first use and caches their instances.
+ * - Routes execution requests (`type: 'run'`) to the correct running worker instance.
+ * - Provides memory safety by explicitly releasing specific workers or all workers
+ *   (`terminateAll`) when they are no longer needed.
+ */
 export class PersistentWorkerManager {
   private readonly _persistentWorkers: Map<string, Worker> = new Map();
 

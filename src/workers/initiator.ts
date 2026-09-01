@@ -1,4 +1,4 @@
-/**o with
+/**
  * Default initiator — a minimal echo worker used as a no-op placeholder.
  *
  * When no custom initiator is passed to `MainWorkerFactory`, this function

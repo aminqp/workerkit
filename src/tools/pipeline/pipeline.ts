@@ -4,6 +4,19 @@ import { WorkerMode } from '../worker-factory/worker-factory';
 import { extractTransferable } from '../extract-transferable';
 import { PipelineContext } from './types';
 
+/**
+ * Executes a pipeline of workers, handling initialization, data flow, and termination.
+ *
+ * This function can execute either a single-step worker or a multi-step worker pipeline.
+ * For multi-step pipelines, workers are linked together via `MessageChannel`s.
+ * Data flows directly from one worker to the next without routing through the main thread,
+ * while errors and pipeline status communicate back to the main thread.
+ *
+ * @param steps - An array of pipeline steps, where each step defines the worker name and input parameters.
+ * @param context - The execution context (provides orchestrator, logger, memory store).
+ * @returns A promise that resolves to the final result of the pipeline, or rejects on error.
+ * @throws {Error} If the pipeline is empty, the worker manager is terminated, or a worker is not found.
+ */
 export async function executePipeline<TResult = unknown>(
   steps: PipelineStep[],
   context: PipelineContext,

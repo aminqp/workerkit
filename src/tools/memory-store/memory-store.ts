@@ -1,7 +1,10 @@
 /**
- * MemoryStore manages dataset handles stored in volatile RAM inside the MemoryWorker.
+ * MemoryStore provides a centralized in-memory caching mechanism, typically run inside
+ * a dedicated Web Worker (`MemoryWorker`). It allows large datasets to be loaded once
+ * into RAM and reused across multiple worker executions without constant serialization.
  *
- * Each dataset is indexed by a cryptographically generated UUID (`__memory_ref__`).
+ * It uses a `Map` where each dataset is indexed by a cryptographically generated
+ * UUID (`__memory_ref__`) to ensure collision-free, secure handle management.
  */
 export class MemoryStore {
   private readonly store = new Map<string, unknown>();
