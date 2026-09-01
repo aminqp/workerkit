@@ -1,5 +1,5 @@
-import { extractTransferable } from './main-worker-factory/main-worker-factory';
-import { WorkerFunction } from './main-worker-factory/types';
+import { extractTransferable } from '../extract-transferable';
+import { WorkerFunction } from '../main-worker-factory/types';
 
 /**
  * Defines and exports a function to run inside a native Web Worker script,

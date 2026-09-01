@@ -278,6 +278,9 @@ const workerConfigs = [
   },
 ] as const;
 
-const foreman = new MainWorkerFactory({ workers: workerConfigs });
+const foreman = new MainWorkerFactory({
+  workers: workerConfigs,
+  logLevel: 'verbose',
+});
 
 initDemo(foreman);

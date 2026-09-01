@@ -12,6 +12,11 @@
       "import": "./dist/index.js",
       "require": "./dist/index.cjs"
     },
+    "./define-worker": {
+      "types": "./dist/types/tools/define-worker/index.d.ts",
+      "import": "./dist/define-worker.js",
+      "require": "./dist/define-worker.cjs"
+    },
     "./eslint-plugin": "./eslint-rules/index.cjs",
     "./eslint-rules/no-dom-in-worker": "./eslint-rules/no-dom-in-worker.cjs",
     "./eslint-rules/worker-exportable": "./eslint-rules/worker-exportable.cjs"

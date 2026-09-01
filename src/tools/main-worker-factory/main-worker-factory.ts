@@ -6,109 +6,62 @@ import {
   WorkerConfigMap,
   WorkerDataParam,
   WorkerFunction,
-  WorkerInstanceConfig,
-  WorkerResult,
   WorkerReturnType,
   TypedSettledResults,
   MemoryStats,
-} from './types.ts';
-import { WorkerFactory } from '../worker-factory';
-import { WorkerMode } from '../worker-factory/worker-factory';
-import { MemoryStore } from './memory-store';
+} from './types';
+import { MemoryStore } from '../memory-store';
+import { Logger, LogLevel } from '../logger';
+import { executeWorker } from '../run-worker';
 
-/**
- * Recursively collects all Transferable objects from a value.
- * Transferable (ArrayBuffer, MessagePort, ImageBitmap, OffscreenCanvas)
- * are zero-copy — they are moved to the worker instead of cloned.
- */
-export function extractTransferable(
-  value: unknown,
-  seen = new Set<object>(),
-): Transferable[] {
-  if (value === null || typeof value !== 'object') return [];
-  if (seen.has(value as object)) return [];
-  seen.add(value as object);
+// Import extracted modules
+import { extractTransferable } from '../extract-transferable';
+import { partitionArray } from '../partition-array';
+import { executePipeline } from '../pipeline';
+import { collectWorkerResults } from '../collect-results';
+import { PersistentWorkerManager } from '../persistent-manager';
+import { WorkerOrchestrator } from '../orchestrator';
 
-  if (
-    value instanceof ArrayBuffer ||
-    value instanceof MessagePort ||
-    (typeof ImageBitmap !== 'undefined' && value instanceof ImageBitmap) ||
-    (typeof OffscreenCanvas !== 'undefined' && value instanceof OffscreenCanvas)
-  ) {
-    return [value as Transferable];
-  }
+export { extractTransferable };
 
-  if (ArrayBuffer.isView(value)) {
-    return [value.buffer];
-  }
-
-  if (Array.isArray(value)) {
-    return value.flatMap((item) => extractTransferable(item, seen));
-  }
-
-  return Object.values(value as object).flatMap((propertyValue) =>
-    extractTransferable(propertyValue, seen),
-  );
-}
-
-/**
- * Central orchestrator for running typed Web Workers in parallel.
- *
- * `MainWorkerFactory` manages a registry of named worker configurations and
- * handles the full lifecycle of each worker: spawning, partitioning input
- * data across threads, retrying on failure, and collecting results.
- *
- * Also supports:
- * - **Pipelines** — chain workers via `MessageChannel` so intermediate data
- *   never crosses back to the main thread ({@link pipeline}).
- * - **Persistent workers** — keep a worker alive with a cached dataset,
- *   re-running it with different configs without re-sending the data
- *   ({@link runPersistent}, {@link release}).
- *
- * @typeParam TConfigs - A readonly tuple of {@link WorkerConfig} objects that
- *   defines the set of available workers and their typed signatures.
- *
- * @example
- * const foreman = new MainWorkerFactory({
- *   workers: [
- *     { name: 'sum', role: 'compute', func: sumWorker, partition: true },
- *   ] as const,
- * });
- *
- * const settled = await foreman.runWorker('sum', { srcData: [1, 2, 3, 4] });
- * const { data } = await foreman.collectResults(settled);
- */
 class MainWorkerFactory<
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   TConfigs extends readonly WorkerConfig<WorkerFunction<any, any>>[],
 > {
   private readonly _workers: WorkerConfig[];
   private readonly _threads: number;
-  private readonly _persistentWorkers: Map<string, Worker> = new Map();
   private readonly _activeWorkers: Set<Worker> = new Set();
   private readonly _memoryStore: MemoryStore = new MemoryStore();
   private _isTerminated = false;
 
-  /**
-   * Creates a new `MainWorkerFactory`.
-   *
-   * @param options - Configuration object containing the `workers` registry.
-   */
-  constructor(options: { workers: TConfigs }) {
+  private readonly _persistentManager: PersistentWorkerManager;
+  private readonly _orchestrator: WorkerOrchestrator;
+  public readonly logger: Logger;
+
+  constructor(options: { workers: TConfigs; logLevel?: LogLevel }) {
     this._workers = options.workers as unknown as WorkerConfig[];
-    this._threads = navigator.hardwareConcurrency;
+    this.logger = new Logger(options.logLevel ?? 'error');
+    this._threads =
+      typeof navigator !== 'undefined' && navigator.hardwareConcurrency
+        ? navigator.hardwareConcurrency
+        : 4;
+
+    const commonContext = {
+      isTerminated: () => this.isTerminated,
+      findWorkerByName: this.findWorkerByName.bind(this),
+      trackWorker: this.trackWorker.bind(this),
+      terminateWorker: this.terminateWorker.bind(this),
+      logger: this.logger,
+    };
+
+    this._persistentManager = new PersistentWorkerManager(commonContext);
+    this._orchestrator = new WorkerOrchestrator(commonContext);
   }
 
-  /**
-   * Returns `true` if the factory has been terminated.
-   */
   get isTerminated(): boolean {
     return this._isTerminated;
   }
 
-  /**
-   * Registers an active worker instance for lifecycle tracking.
-   */
   private trackWorker(worker: Worker): Worker {
     if (this._isTerminated) {
       worker.terminate();
@@ -118,9 +71,6 @@ class MainWorkerFactory<
     return worker;
   }
 
-  /**
-   * Terminates a worker instance and removes it from tracking.
-   */
   private terminateWorker(worker: Worker): void {
     this._activeWorkers.delete(worker);
     try {
@@ -130,91 +80,14 @@ class MainWorkerFactory<
     }
   }
 
-  /**
-   * Instantiates a {@link WorkerFactory} for the given worker configuration.
-   *
-   * @param config - The worker configuration containing `func` or `createWorker`.
-   * @returns A new `WorkerFactory` wrapping the worker.
-   */
-  private initWorker(config: WorkerConfig): WorkerFactory {
-    const factory = new WorkerFactory(config.func, {
-      createWorker: config.createWorker,
-    });
-    this.trackWorker(factory.getWorker);
-    return factory;
-  }
-
-  /**
-   * Splits an array into up to `numChunks` evenly-sized sub-arrays.
-   *
-   * When the array length is not evenly divisible, the first `remainder`
-   * chunks receive one extra element so no data is lost.
-   *
-   * @param array     - The source array to partition.
-   * @param numChunks - Maximum number of chunks to produce.
-   *   Clamped to `array.length` so you never get empty chunks.
-   * @returns An array of sub-arrays. Returns `[]` when `array` is empty.
-   * @throws {Error} When `numChunks` is not a positive integer.
-   *
-   * @example
-   * partitionArray([1, 2, 3, 4, 5], 3);
-   * // → [[1, 2], [3, 4], [5]]
-   */
   partitionArray<T>(array: T[], numChunks: number): T[][] {
-    if (!array.length) return [];
-    if (numChunks <= 0) throw new Error('numChunks must be positive');
-
-    const chunks = Math.min(numChunks, array.length);
-    const chunkSize = Math.floor(array.length / chunks);
-    const remainder = array.length % chunks;
-    const result: T[][] = [];
-    let start = 0;
-
-    for (let chunkIndex = 0; chunkIndex < chunks; chunkIndex++) {
-      const size = chunkSize + (chunkIndex < remainder ? 1 : 0);
-      result.push(array.slice(start, start + size));
-      start += size;
-    }
-
-    return result;
+    return partitionArray(array, numChunks);
   }
 
-  /**
-   * Looks up a registered worker configuration by name.
-   *
-   * @param name - The `name` field of the target {@link WorkerConfig}.
-   * @returns The matching config, or `undefined` if not found.
-   */
   private findWorkerByName(name: string): WorkerConfig | undefined {
     return this._workers.find((worker) => worker.name === name);
   }
 
-  /**
-   * Runs a named worker against the provided data, distributing work across
-   * threads when the worker is configured for partitioning.
-   *
-   * When `config.partition` is `true` and `srcData` is an array with more
-   * than one element, the array is split into up to `maxConcurrency` (or
-   * `navigator.hardwareConcurrency`) shards and each shard is processed by
-   * a separate worker thread in parallel.
-   *
-   * All threads are awaited with `Promise.allSettled`, so a failure in one
-   * shard does not cancel the others. Use {@link collectResults} to merge
-   * the settled output.
-   *
-   * @typeParam TName - The literal name of the worker to run (inferred from
-   *   the registered `workers` tuple).
-   *
-   * @param workerName - Name of the worker as declared in the `workers` config.
-   * @param params     - Object containing `srcData` (the payload) plus any
-   *   additional key/value pairs forwarded to the worker verbatim.
-   *
-   * @returns A {@link TypedSettledResults} wrapping the settled promises from
-   *   all spawned worker threads.
-   *
-   * @example
-   * const settled = await foreman.runWorker('sum', { srcData: [1, 2, 3] });
-   */
   async runWorker<TName extends keyof WorkerConfigMap<TConfigs> & string>(
     workerName: TName,
     rawParams: {
@@ -225,340 +98,28 @@ class MainWorkerFactory<
   ): Promise<
     TypedSettledResults<WorkerReturnType<WorkerConfigMap<TConfigs>[TName]>>
   > {
-    if (this._isTerminated) {
-      return Promise.reject(new Error('MainWorkerFactory has been terminated'));
-    }
-
-    const config = this.findWorkerByName(workerName);
-    if (!config)
-      return Promise.reject(new Error(`Worker "${workerName}" not found`));
-
-    let { srcData, ...otherParams } = (rawParams || {}) as {
-      srcData?: unknown;
-    } & Record<string, unknown>;
-
-    // Memory Reference Resolution:
-    // If srcData is omitted and __memory_ref__ is present, resolve data from MemoryStore
-    const memoryRef = otherParams.__memory_ref__ as string | undefined;
-    const shouldDeleteMemory = Boolean(otherParams.deleteMemory);
-
-    if (srcData === undefined && memoryRef) {
-      if (!this._memoryStore.has(memoryRef)) {
-        return Promise.reject(
-          new Error(`Memory reference "${memoryRef}" not found in MemoryStore`),
-        );
-      }
-      srcData = this._memoryStore.get(memoryRef);
-      delete otherParams.__memory_ref__;
-      delete otherParams.deleteMemory;
-    } else {
-      delete otherParams.deleteMemory;
-    }
-
-    const threadCount = config.maxConcurrency ?? this._threads;
-    const shouldPartition = Boolean(Array.isArray(srcData) && config.partition);
-
-    const processedData = shouldPartition
-      ? this.partitionArray(srcData as unknown[], threadCount)
-      : srcData;
-
-    const actualThreadCount =
-      shouldPartition && Array.isArray(processedData)
-        ? processedData.length
-        : threadCount;
-
-    const promises = this.createWorkerPromises(
-      config,
-      workerName,
-      { data: processedData, ...otherParams },
-      actualThreadCount,
-      shouldPartition,
-    );
-
-    const settled = await Promise.allSettled(promises);
-
-    // Deferred Memory Reference Deletion:
-    if (shouldDeleteMemory && memoryRef) {
-      this._memoryStore.delete(memoryRef);
-    }
-
-    // Memory Storage Handling:
-    // If worker config specifies memory or memoryOnly, save dataset in MemoryStore
-    if (config.memoryOnly || config.memory) {
-      this.storeWorkerMemoryResult(settled, {
-        memoryOnly: Boolean(config.memoryOnly),
-        shouldPartition,
-      });
-    }
-
-    return new TypedSettledResults(settled);
+    return executeWorker(workerName, rawParams, {
+      isTerminated: () => this.isTerminated,
+      findWorkerByName: this.findWorkerByName.bind(this),
+      memoryStore: this._memoryStore,
+      threads: this._threads,
+      orchestrator: this._orchestrator,
+      logger: this.logger,
+    });
   }
 
-  /**
-   * Deletes a specific memory reference from the factory's memory store.
-   *
-   * @param ref - The `__memory_ref__` token string to delete.
-   * @returns A promise that resolves to `true` if deleted, `false` otherwise.
-   */
   async deleteMemory(ref: string): Promise<boolean> {
     return this._memoryStore.delete(ref);
   }
 
-  /**
-   * Clears all stored dataset references from the factory's memory store.
-   */
   async clearMemory(): Promise<void> {
     this._memoryStore.clear();
   }
 
-  /**
-   * Saves the output of a completed worker execution into MemoryStore
-   * and modifies the returned settled results with a `__memory_ref__` token.
-   */
-  private storeWorkerMemoryResult(
-    settled: PromiseSettledResult<WorkerResult>[],
-    {
-      memoryOnly,
-      shouldPartition,
-    }: { memoryOnly: boolean; shouldPartition: boolean },
-  ): void {
-    const fulfilledResults = settled.filter(
-      (result): result is PromiseFulfilledResult<WorkerResult> =>
-        result.status === 'fulfilled' && Boolean(result.value.successResult),
-    );
-
-    if (fulfilledResults.length === 0) return;
-
-    // 1. Collect output data from all fulfilled worker threads
-    const shardOutputs = fulfilledResults.map(
-      (result) => result.value.successResult!.data,
-    );
-
-    // 2. Combine shard outputs into a single dataset
-    const combinedOutput =
-      shouldPartition && shardOutputs.every(Array.isArray)
-        ? shardOutputs.flat()
-        : shardOutputs.length === 1
-          ? shardOutputs[0]
-          : shardOutputs;
-
-    // 3. Save combined dataset into MemoryStore and get a reference token
-    const ref = this._memoryStore.set(combinedOutput);
-
-    // 4. Update the event payload returned to the caller
-    for (const res of fulfilledResults) {
-      const newPayload = memoryOnly
-        ? { __memory_ref__: ref }
-        : { data: res.value.successResult!.data, __memory_ref__: ref };
-
-      res.value.successResult = new MessageEvent('message', {
-        data: newPayload,
-      });
-    }
-  }
-
-  /**
-   * Returns statistics about active memory references in the factory.
-   */
   async getMemoryStats(): Promise<MemoryStats> {
     return this._memoryStore.stats();
   }
 
-  /**
-   * Builds the array of per-thread worker promises for a single `runWorker`
-   * call.
-   *
-   * When `isPartitioned` is `true`, each promise receives its own slice of
-   * `srcData`; otherwise every thread receives the full payload.
-   *
-   * @param config         - The resolved {@link WorkerConfig} for this run.
-   * @param workerName     - Name used in error/retry logging.
-   * @param srcWorkerData  - Combined `{ data, ...otherParams }` payload.
-   * @param threadCount    - Number of parallel worker threads to spawn.
-   * @param isPartitioned  - Whether `data` is a pre-split array of shards.
-   * @returns An array of promises, one per thread.
-   */
-  private createWorkerPromises(
-    config: WorkerConfig,
-    workerName: string,
-    srcWorkerData: { data: unknown } & Record<string, unknown>,
-    threadCount: number,
-    isPartitioned: boolean,
-  ): Promise<WorkerResult>[] {
-    const { data: srcData, ...otherParams } = srcWorkerData;
-
-    return Array.from({ length: threadCount }, (_, index) => {
-      const data =
-        isPartitioned && Array.isArray(srcData) ? srcData[index] : srcData;
-      return this.runWorkerWithRetry(
-        {
-          workerFunc: config.func,
-          createWorker: config.createWorker,
-          workerName,
-          index,
-          data: { data, ...otherParams },
-        },
-        config.retries,
-      );
-    });
-  }
-
-  /**
-   * Runs a single worker instance, retrying on failure up to `retryCount`
-   * times before re-throwing the last error.
-   *
-   * Each retry is logged to `console.error` with the remaining attempt count
-   * so failures are visible during development.
-   *
-   * @param instanceConfig - Full configuration for the worker instance.
-   * @param retryCount     - Remaining retry attempts (default `2`).
-   * @returns The successful {@link WorkerResult} once the worker resolves.
-   * @throws The last caught error when all retries are exhausted.
-   */
-  private async runWorkerWithRetry(
-    instanceConfig: WorkerInstanceConfig,
-    retryCount = 2,
-  ): Promise<WorkerResult> {
-    try {
-      return await this.initiateWorker(instanceConfig);
-    } catch (error) {
-      if (retryCount > 0) {
-        console.error(
-          `Worker ${instanceConfig.index} failed, retrying (${retryCount} left):`,
-          error,
-        );
-        return this.runWorkerWithRetry(instanceConfig, retryCount - 1);
-      }
-      console.error(`Worker failed after all retries:`, error);
-      throw error;
-    }
-  }
-
-  /**
-   * Spawns a single worker thread, posts the payload, and resolves or rejects
-   * based on the message the worker sends back.
-   *
-   * The worker is expected to respond with either:
-   * - `{ ok: true, data: T }` — success; resolves with a {@link WorkerResult}.
-   * - `{ ok: false, error: string }` — logical failure; rejects with a
-   *   structured error object.
-   *
-   * Any transferable objects found in the payload are moved (not copied) to
-   * the worker via the `transfer` list of `postMessage`.
-   *
-   * The underlying `Worker` is always terminated after the message completes.
-   *
-   * @param instanceConfig - Worker function, factory, name, shard index, and data.
-   * @returns A promise that resolves with the worker's result.
-   */
-  private initiateWorker({
-    workerFunc,
-    createWorker,
-    workerName,
-    index,
-    data,
-  }: WorkerInstanceConfig): Promise<WorkerResult> {
-    return new Promise((resolve, reject) => {
-      const worker = this.initWorker({
-        name: workerName,
-        role: '',
-        func: workerFunc,
-        createWorker,
-      });
-      const raw = worker.getWorker;
-
-      raw.onerror = (event) => {
-        this.terminateWorker(raw);
-        reject({
-          index,
-          workerConfigs: {
-            workerFunc,
-            createWorker,
-            workerName,
-            index,
-            data,
-          },
-          failedResult: event,
-        });
-      };
-
-      raw.onmessage = (event) => {
-        if (event.data?.ok === false) {
-          this.terminateWorker(raw);
-          reject({
-            index,
-            workerConfigs: {
-              workerFunc,
-              createWorker,
-              workerName,
-              index,
-              data,
-            },
-            failedResult: new ErrorEvent('error', {
-              message: event.data.error,
-            }),
-          });
-          return;
-        }
-        const payloadData =
-          event.data?.ok !== undefined ? event.data.data : event.data;
-
-        resolve({
-          index,
-          workerConfigs: {
-            workerFunc,
-            createWorker,
-            workerName,
-            index,
-            data,
-          },
-          successResult: new MessageEvent('message', {
-            data: payloadData,
-          }),
-        });
-        this.terminateWorker(raw);
-      };
-
-      const payload = {
-        index,
-        ...(Array.isArray(data) ? { data } : (data as Record<string, unknown>)),
-      };
-      raw.postMessage(payload, extractTransferable(payload));
-    });
-  }
-
-  /**
-   * Collects and merges the settled results from {@link runWorker} — off the
-   * main thread.
-   *
-   * Fulfilled shards are extracted and passed to the `reducer` function, which
-   * runs inside a dedicated inline worker so the merge itself never blocks the
-   * main thread. Failed shards are counted and their raw rejection reasons are
-   * preserved in `errors`.
-   *
-   * @typeParam T - The per-shard data type (inferred from `settled`).
-   * @typeParam R - The final merged output type (defaults to a flat array of
-   *   `T` items when no custom reducer is provided).
-   *
-   * @param settled  - The {@link TypedSettledResults} returned by `runWorker`.
-   * @param options  - Optional {@link CollectOptions}. Supply a `reducer` to
-   *   control how shards are merged. The reducer **must be self-contained**
-   *   (no closures over external variables) because it is serialised and run
-   *   inside a worker.
-   *
-   * @returns A {@link CollectedResult} with the merged `data`, counts of
-   *   `succeeded`/`failed` shards, and the raw `errors` array.
-   *
-   * @example
-   * // default: flat array of all shard data
-   * const { data, succeeded, failed } = await foreman.collectResults(res);
-   *
-   * @example
-   * // custom reducer: sum numbers across shards
-   * const { data } = await foreman.collectResults<number[], number>(res, {
-   *   reducer: (shards) => shards.flat().reduce((a, b) => a + b, 0),
-   * });
-   */
   async collectResults<
     T = unknown,
     R = T extends (infer Item)[] ? Item[] : T[],
@@ -566,468 +127,39 @@ class MainWorkerFactory<
     settled: TypedSettledResults<T> | TypedSettledResults<unknown>,
     options: CollectOptions<T, R> = {},
   ): Promise<CollectedResult<R>> {
-    if (this._isTerminated) {
-      throw new Error('MainWorkerFactory has been terminated');
-    }
-
-    const fulfilled = settled.results.filter(
-      (result) => result.status === 'fulfilled',
-    ) as PromiseFulfilledResult<WorkerResult>[];
-    const errors = settled.results.filter(
-      (result) => result.status === 'rejected',
-    ) as PromiseRejectedResult[];
-
-    // If all fulfilled shards returned a memoryOnly reference payload with the same token,
-    // return the single memory reference payload instead of an array of duplicate ref objects.
-    const isMemoryOnlyRef =
-      fulfilled.length > 0 &&
-      fulfilled.every((result) => {
-        const responseData = result.value.successResult?.data as Record<
-          string,
-          unknown
-        >;
-        return (
-          responseData &&
-          typeof responseData === 'object' &&
-          '__memory_ref__' in responseData &&
-          !('data' in responseData)
-        );
-      });
-
-    if (isMemoryOnlyRef) {
-      const firstData = fulfilled[0].value.successResult!.data as R;
-      return {
-        data: firstData,
-        succeeded: fulfilled.length,
-        failed: errors.length,
-        errors,
-      };
-    }
-
-    // Check if memory ref payload with data (memory: true)
-    const isMemoryRefWithData =
-      fulfilled.length > 0 &&
-      fulfilled.every((result) => {
-        const responseData = result.value.successResult?.data as Record<
-          string,
-          unknown
-        >;
-        return (
-          responseData &&
-          typeof responseData === 'object' &&
-          '__memory_ref__' in responseData &&
-          'data' in responseData
-        );
-      });
-
-    const memoryRefToken = isMemoryRefWithData
-      ? ((fulfilled[0].value.successResult!.data as { __memory_ref__: string })
-          .__memory_ref__ as string)
-      : undefined;
-
-    const shards = fulfilled.map((result) => {
-      const responseData = result.value.successResult!.data;
-      if (
-        isMemoryRefWithData &&
-        responseData &&
-        typeof responseData === 'object' &&
-        'data' in responseData
-      ) {
-        return (responseData as { data: T }).data;
-      }
-      return responseData as T;
+    return collectWorkerResults(settled, options, {
+      isTerminated: () => this.isTerminated,
+      trackWorker: this.trackWorker.bind(this),
+      terminateWorker: this.terminateWorker.bind(this),
+      logger: this.logger,
     });
-
-    // Build a self-contained merge function for the worker
-    const reducerSrc = options.reducer
-      ? options.reducer.toString()
-      : '(shards) => shards.flat()';
-
-    let mergeResult: R;
-
-    if (
-      typeof Worker !== 'undefined' &&
-      typeof Blob !== 'undefined' &&
-      typeof URL !== 'undefined' &&
-      typeof URL.createObjectURL === 'function'
-    ) {
-      try {
-        mergeResult = await new Promise<R>((resolve, reject) => {
-          const workerSrc = `
-            const reducer = ${reducerSrc};
-            self.addEventListener('message', (event) => {
-              try {
-                const result = reducer(event.data);
-                self.postMessage({ ok: true, data: result });
-              } catch (error) {
-                self.postMessage({ ok: false, error: String(error) });
-              }
-            });
-          `;
-          const blob = new Blob([workerSrc], {
-            type: 'application/javascript',
-          });
-          const worker = this.trackWorker(
-            new Worker(URL.createObjectURL(blob)),
-          );
-
-          worker.onmessage = (event) => {
-            this.terminateWorker(worker);
-            if (event.data.ok) resolve(event.data.data);
-            else reject(new Error(event.data.error));
-          };
-          worker.onerror = (event) => {
-            this.terminateWorker(worker);
-            reject(event);
-          };
-          worker.postMessage(shards);
-        });
-      } catch {
-        const defaultReducer = (s: unknown[]) => (s as unknown[][]).flat();
-        const reducer = options.reducer ?? defaultReducer;
-        mergeResult = reducer(shards as T[]) as R;
-      }
-    } else {
-      const defaultReducer = (s: unknown[]) => (s as unknown[][]).flat();
-      const reducer = options.reducer ?? defaultReducer;
-      mergeResult = reducer(shards as T[]) as R;
-    }
-
-    const finalData = isMemoryRefWithData
-      ? ({ data: mergeResult, __memory_ref__: memoryRefToken } as unknown as R)
-      : mergeResult;
-
-    return {
-      data: finalData,
-      succeeded: fulfilled.length,
-      failed: errors.length,
-      errors,
-    };
   }
 
-  /**
-   * Runs a chain of workers where each step's output feeds directly into the
-   * next step — **without passing through the main thread**.
-   *
-   * Internally, adjacent workers are connected via `MessageChannel` ports.
-   * Only the final result is sent back to the main thread, minimising
-   * serialisation overhead for large intermediate data.
-   *
-   * @typeParam TResult - The expected type of the final pipeline output.
-   *   Defaults to `unknown` if not specified.
-   *
-   * @param steps - An ordered array of {@link PipelineStep} objects. The first
-   *   step must include `srcData`; subsequent steps receive the previous
-   *   step's output as `{ data: previousOutput, index: 0 }`.
-   *
-   * @returns A promise that resolves with the final step's output.
-   * @throws {Error} When `steps` is empty or a worker name is not found.
-   *
-   * @example
-   * const result = await foreman.pipeline<FilteredPost[]>([
-   *   { worker: 'fetchPosts', srcData: { url: '/api/posts' } },
-   *   { worker: 'transformPosts' },
-   *   { worker: 'filterPosts' },
-   * ]);
-   * console.log(result); // final transformed + filtered data
-   */
   async pipeline<TResult = unknown>(steps: PipelineStep[]): Promise<TResult> {
-    if (this._isTerminated) {
-      throw new Error('MainWorkerFactory has been terminated');
-    }
-
-    if (steps.length === 0) {
-      throw new Error('Pipeline requires at least one step');
-    }
-
-    if (steps.length === 1) {
-      const step = steps[0];
-      const { worker: _workerName, srcData, ...stepParams } = step;
-      const config = this.findWorkerByName(step.worker);
-      if (!config) throw new Error(`Worker "${step.worker}" not found`);
-      const worker = this.initWorker(config);
-      const raw = worker.getWorker;
-
-      return new Promise<TResult>((resolve, reject) => {
-        raw.onmessage = (event) => {
-          this.terminateWorker(raw);
-          if (event.data?.ok === false) reject(new Error(event.data.error));
-          else resolve(event.data?.data as TResult);
-        };
-        raw.onerror = (event) => {
-          this.terminateWorker(raw);
-          reject(event);
-        };
-        const payloadData = srcData ?? {};
-        const payload = { data: payloadData, ...stepParams, index: 0 };
-        raw.postMessage(payload, extractTransferable(payload));
-      });
-    }
-
-    // Build the pipeline: connect workers via MessageChannels
-    return new Promise<TResult>((resolve, reject) => {
-      const workers: Worker[] = [];
-      const channels: MessageChannel[] = [];
-
-      // Create all workers
-      for (const step of steps) {
-        const config = this.findWorkerByName(step.worker);
-        if (!config) {
-          reject(new Error(`Worker "${step.worker}" not found`));
-          return;
-        }
-        const factory = new WorkerFactory(config.func, {
-          mode: WorkerMode.Pipeline,
-          createWorker: config.createWorker,
-        });
-        const raw = this.trackWorker(factory.getWorker);
-        workers.push(raw);
-      }
-
-      // Create channels between adjacent workers
-      for (
-        let channelIndex = 0;
-        channelIndex < workers.length - 1;
-        channelIndex++
-      ) {
-        channels.push(new MessageChannel());
-      }
-
-      // Wire up: each worker (except last) gets an output port
-      // Each worker (except first) gets an input port
-      for (let stepIndex = 0; stepIndex < workers.length; stepIndex++) {
-        const {
-          worker: _workerName,
-          srcData: _sourceData,
-          ...stepParams
-        } = steps[stepIndex];
-        const transferList: Transferable[] = [];
-        const ports: { inputPort?: MessagePort; outputPort?: MessagePort } = {};
-
-        if (stepIndex > 0) {
-          // Receive input from previous worker's channel
-          ports.inputPort = channels[stepIndex - 1].port1;
-          transferList.push(ports.inputPort);
-        }
-
-        if (stepIndex < workers.length - 1) {
-          // Send output to next worker's channel
-          ports.outputPort = channels[stepIndex].port2;
-          transferList.push(ports.outputPort);
-        }
-
-        // Send ports to the worker for pipeline wiring
-        workers[stepIndex].postMessage(
-          { __pipeline_ports__: true, stepParams, ...ports },
-          transferList,
-        );
-
-        // Fallback relay for plain native workers that post messages to the main thread
-        if (stepIndex < workers.length - 1) {
-          const currentWorker = workers[stepIndex];
-          const nextWorker = workers[stepIndex + 1];
-          const {
-            worker: _nextWorkerName,
-            srcData: _nextSourceData,
-            ...nextParams
-          } = steps[stepIndex + 1];
-
-          currentWorker.onmessage = (event) => {
-            if (event.data && event.data.__pipeline_ports__) return;
-
-            if (event.data?.ok === false) {
-              workers.forEach((worker) => this.terminateWorker(worker));
-              reject(new Error(event.data.error));
-              return;
-            }
-
-            const payloadData =
-              event.data?.ok !== undefined ? event.data.data : event.data;
-            const payload = { data: payloadData, ...nextParams, index: 0 };
-            nextWorker.postMessage(payload, extractTransferable(payload));
-          };
-
-          currentWorker.onerror = (event) => {
-            workers.forEach((worker) => this.terminateWorker(worker));
-            reject(event);
-          };
-        }
-      }
-
-      // Listen for the final worker's result
-      const lastWorker = workers[workers.length - 1];
-      lastWorker.onmessage = (event) => {
-        // Terminate all workers
-        workers.forEach((worker) => this.terminateWorker(worker));
-        if (event.data?.ok === false) reject(new Error(event.data.error));
-        else resolve(event.data?.data as TResult);
-      };
-      lastWorker.onerror = (event) => {
-        workers.forEach((worker) => this.terminateWorker(worker));
-        reject(event);
-      };
-
-      // Kick off the first worker with srcData and stepParams
-      const {
-        worker: _firstWorkerName,
-        srcData: initialData,
-        ...initialParams
-      } = steps[0];
-
-      let firstPayloadData = initialData;
-      const memoryRef = initialParams.__memory_ref__ as string | undefined;
-      const shouldDeleteMemory = Boolean(initialParams.deleteMemory);
-
-      if (firstPayloadData === undefined && memoryRef) {
-        if (!this._memoryStore.has(memoryRef)) {
-          workers.forEach((w) => this.terminateWorker(w));
-          reject(
-            new Error(
-              `Memory reference "${memoryRef}" not found in MemoryStore`,
-            ),
-          );
-          return;
-        }
-        firstPayloadData = this._memoryStore.get(memoryRef);
-        if (shouldDeleteMemory) {
-          this._memoryStore.delete(memoryRef);
-        }
-        delete initialParams.__memory_ref__;
-        delete initialParams.deleteMemory;
-      }
-      if (firstPayloadData === undefined) {
-        firstPayloadData = {};
-      }
-
-      const firstPayload = {
-        data: firstPayloadData,
-        ...initialParams,
-        index: 0,
-      };
-      workers[0].postMessage(firstPayload, extractTransferable(firstPayload));
+    return executePipeline(steps, {
+      memoryStore: this._memoryStore,
+      isTerminated: () => this.isTerminated,
+      findWorkerByName: this.findWorkerByName.bind(this),
+      trackWorker: this.trackWorker.bind(this),
+      terminateWorker: this.terminateWorker.bind(this),
+      logger: this.logger,
     });
   }
 
-  /**
-   * Runs a persistent worker that caches its dataset between calls.
-   *
-   * On the first call, provide both `dataset` and `config`. The worker stores
-   * the dataset in memory. On subsequent calls, only `config` is needed — the
-   * worker reuses the cached dataset and reprocesses it with the new config.
-   *
-   * The worker stays alive until {@link release} is called.
-   *
-   * @param workerName - Name of the registered worker.
-   * @param params - Object with optional `dataset` and required `config`.
-   * @returns The worker function's return value.
-   *
-   * @example
-   * // First call: send dataset + config
-   * const r1 = await factory.runPersistent('transform', {
-   *   dataset: largeArray,
-   *   config: { multiplier: 2 },
-   * });
-   *
-   * // Subsequent calls: only config, dataset is cached
-   * const r2 = await factory.runPersistent('transform', {
-   *   config: { multiplier: 5 },
-   * });
-   *
-   * // Update dataset when needed
-   * const r3 = await factory.runPersistent('transform', {
-   *   dataset: newArray,
-   *   config: { multiplier: 3 },
-   * });
-   *
-   * // Release when done
-   * factory.release('transform');
-   */
   async runPersistent<TResult = unknown>(
     workerName: string,
     params: { dataset?: unknown; config: unknown },
   ): Promise<TResult> {
-    if (this._isTerminated) {
-      throw new Error('MainWorkerFactory has been terminated');
-    }
-
-    const config = this.findWorkerByName(workerName);
-    if (!config) throw new Error(`Worker "${workerName}" not found`);
-
-    // Get or create the persistent worker
-    let raw = this._persistentWorkers.get(workerName);
-    if (!raw) {
-      const factory = new WorkerFactory(config.func, {
-        mode: WorkerMode.Persistent,
-        createWorker: config.createWorker,
-      });
-      raw = this.trackWorker(factory.getWorker);
-      this._persistentWorkers.set(workerName, raw);
-    }
-
-    return new Promise<TResult>((resolve, reject) => {
-      raw!.onmessage = (event) => {
-        if (event.data?.ok === false) {
-          reject(new Error(event.data.error));
-        } else {
-          resolve(event.data?.data as TResult);
-        }
-      };
-      raw!.onerror = (event) => {
-        reject(event);
-      };
-
-      const message: { type: string; config: unknown; dataset?: unknown } = {
-        type: 'run',
-        config: params.config,
-      };
-      if (params.dataset !== undefined) {
-        message.dataset = params.dataset;
-      }
-      raw!.postMessage(message, extractTransferable(message));
-    });
+    return this._persistentManager.runPersistent(workerName, params);
   }
 
-  /**
-   * Releases a persistent worker, freeing its cached dataset and terminating
-   * the thread.
-   *
-   * After calling `release`, subsequent `runPersistent` calls for this worker
-   * will create a fresh instance (requiring a new dataset).
-   *
-   * @param workerName - Name of the persistent worker to release.
-   */
   release(workerName: string): void {
-    const raw = this._persistentWorkers.get(workerName);
-    if (raw) {
-      try {
-        raw.postMessage({ type: 'release' });
-      } catch {
-        // Ignore
-      }
-      this.terminateWorker(raw);
-      this._persistentWorkers.delete(workerName);
-    }
+    this._persistentManager.release(workerName);
   }
 
-  /**
-   * Terminates the factory and all active and persistent worker instances.
-   *
-   * Calling `terminate()` immediately stops all running worker threads, releases
-   * cached persistent workers, and clears all internal worker state.
-   */
   terminate(): void {
     this._isTerminated = true;
-
-    for (const worker of this._persistentWorkers.values()) {
-      try {
-        worker.postMessage({ type: 'release' });
-      } catch {
-        // Ignore
-      }
-      this.terminateWorker(worker);
-    }
-    this._persistentWorkers.clear();
-
+    this._persistentManager.terminateAll();
     for (const worker of Array.from(this._activeWorkers)) {
       this.terminateWorker(worker);
     }
@@ -1035,25 +167,15 @@ class MainWorkerFactory<
     this._memoryStore.clear();
   }
 
-  /**
-   * Alias for {@link terminate}. Terminates the factory and all worker instances.
-   */
   destroy(): void {
     this.terminate();
   }
 
-  /**
-   * Resets the factory by terminating all active and persistent workers
-   * and resetting the factory state, allowing new worker instances to be initiated.
-   */
   reset(): void {
     this.terminate();
     this._isTerminated = false;
   }
 
-  /**
-   * Alias for {@link reset}. Resets the factory state to initiate new worker instances.
-   */
   restart(): void {
     this.reset();
   }

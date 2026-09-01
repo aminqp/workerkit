@@ -1,4 +1,5 @@
 import { WorkerFactory } from '../worker-factory';
+import { LogLevel } from '../logger';
 
 /** A unique string identifier for a worker, matching its `name` field. */
 export type WorkerName = string;
@@ -133,6 +134,7 @@ export type WorkerReturnType<TFunc extends WorkerFunction> =
 /** Options passed to the `MainWorkerFactory` constructor. */
 export interface MainWorkerFactoryOptions {
   workers: WorkerConfig[];
+  logLevel?: LogLevel;
 }
 
 /** Internal representation of a worker config that has been instantiated. */

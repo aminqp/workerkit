@@ -2,7 +2,7 @@
  * Native Worker Step 1: Data Generator
  * Uses `defineWorker` for type-safe message handling, zero-copy transfers, and pipeline wiring.
  */
-import { defineWorker } from '../tools/define-worker.ts';
+import { defineWorker } from '../tools/define-worker/index.ts';
 
 export interface Step1Payload {
   count?: number;

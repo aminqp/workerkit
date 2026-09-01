@@ -57,15 +57,15 @@ console.log(data); // [15]
 
 ## WorkerConfig Options
 
-| Option           | Type           | Default                         | Description                                                                                         |
-| ---------------- | -------------- | ------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `name`           | `string`       | —                               | Unique identifier used to call the worker                                                           |
-| `role`           | `string`       | —                               | Logical grouping label                                                                              |
-| `func`           | `Function`     | —                               | The exported worker function to run (optional if `createWorker` is provided)                        |
-| `createWorker`   | `() => Worker` | —                               | Worker factory function `() => new Worker(new URL(...))` for Webpack 5 / Vite static analysis       |
-| `maxConcurrency` | `number`       | `navigator.hardwareConcurrency` | Max parallel worker instances — defaults to the number of logical CPU cores reported by the browser |
-| `retries`        | `number`       | `0`                             | How many times to retry a failed shard before marking it as rejected                                |
-| `partition`      | `boolean`      | `false`                         | Split array input across multiple workers automatically                                             |
+| Option           | Type           | Default                               | Description                                                                                         |
+| ---------------- | -------------- | ------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `name`           | `string`       | —                                     | Unique identifier used to call the worker                                                           |
+| `role`           | `string`       | —                                     | Logical grouping label                                                                              |
+| `func`           | `Function`     | —                                     | The exported worker function to run (optional if `createWorker` is provided)                        |
+| `createWorker`   | `() => Worker` | —                                     | Worker factory function `() => new Worker(new URL(...))` for Webpack 5 / Vite static analysis       |
+| `maxConcurrency` | `number`       | `navigator.`<br>`hardwareConcurrency` | Max parallel worker instances — defaults to the number of logical CPU cores reported by the browser |
+| `retries`        | `number`       | `0`                                   | How many times to retry a failed shard before marking it as rejected                                |
+| `partition`      | `boolean`      | `false`                               | Split array input across multiple workers automatically                                             |
 
 ---
 

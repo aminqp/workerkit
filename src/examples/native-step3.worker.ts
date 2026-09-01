@@ -2,7 +2,7 @@
  * Native Worker Step 3: Summarizer & Filter
  * Uses `defineWorker` to process transformed items from Step 2 and generate a summary report.
  */
-import { defineWorker } from '../tools/define-worker.ts';
+import { defineWorker } from '../tools/define-worker/index.ts';
 import type { TransformedItem } from './native-step2.worker.ts';
 
 export interface NativePipelineSummary {

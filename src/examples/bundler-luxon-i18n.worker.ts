@@ -11,7 +11,7 @@
  */
 import { DateTime } from 'luxon';
 import i18next from './i18n.config.ts';
-import { defineWorker } from '../tools/define-worker.ts';
+import { defineWorker } from '../tools/define-worker/index.ts';
 
 export interface DataPayload {
   items: { id: string; date: string; value: number }[];

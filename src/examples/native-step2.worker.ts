@@ -2,7 +2,7 @@
  * Native Worker Step 2: Data Transformer
  * Uses `defineWorker` to receive items from Step 1 via MessageChannel pipeline or main-thread relay.
  */
-import { defineWorker } from '../tools/define-worker.ts';
+import { defineWorker } from '../tools/define-worker/index.ts';
 import type { RawItem } from './native-step1.worker.ts';
 
 export interface TransformedItem extends RawItem {

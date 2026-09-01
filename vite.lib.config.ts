@@ -13,9 +13,13 @@ export default defineConfig({
   ],
   build: {
     lib: {
-      entry: resolve(__dirname, 'src/tools/index.ts'),
+      entry: {
+        index: resolve(__dirname, 'src/tools/index.ts'),
+        'define-worker': resolve(__dirname, 'src/tools/define-worker/index.ts'),
+      },
       name: 'WebWorkerManager',
-      fileName: 'index',
+      fileName: (format, entryName) =>
+        `${entryName}.${format === 'es' ? 'js' : 'cjs'}`,
       formats: ['es', 'cjs'],
     },
     outDir: 'dist',
