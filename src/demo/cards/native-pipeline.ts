@@ -23,7 +23,7 @@ export function initNativePipelineCard(foreman: Foreman) {
         'nativeStep1 → nativeStep2 → nativeStep3 (defineWorker pipeline)…',
       );
 
-      const result: NativePipelineSummary = await foreman.pipeline([
+      const { data: result } = await foreman.pipeline<NativePipelineSummary>([
         { worker: 'nativeStep1', srcData: { count: 30 } },
         { worker: 'nativeStep2', multiplier: 2.0 },
         { worker: 'nativeStep3', minScore: 80 },

@@ -40,6 +40,9 @@ export function defineWorker<TParams = unknown, TResult = unknown>(
   let pendingData: unknown = null;
   let stepParams: Record<string, unknown> = {};
 
+  let memPort: MessagePort | null = null;
+  let factoryToken: string | null = null;
+
   const postWorkerMessage = (message: unknown, transfer?: Transferable[]) => {
     (
       self as unknown as {
@@ -55,12 +58,33 @@ export function defineWorker<TParams = unknown, TResult = unknown>(
           ? { ...stepParams, ...(data as Record<string, unknown>) }
           : { data, ...stepParams, index: 0 };
       const output = await workerFn(payload as TParams);
-      const result = { ok: true, data: output };
       const transfers = extractTransferable(output);
       if (outputPort) {
-        outputPort.postMessage(result, transfers);
+        // Pipeline output — forward directly to next worker in chain
+        // TODO: Pipeline memory optimization (storing intermediate results in MemoryWorker)
+        // should be implemented in a future update.
+        outputPort.postMessage({ ok: true, data: output }, transfers);
+      } else if (memPort) {
+        // Memory path: store in MemoryWorker, post only the ref token
+        const ref = 'mem_' + crypto.randomUUID();
+        await new Promise<void>((resolve, reject) => {
+          memPort!.onmessage = (e) => {
+            if (e.data?.ref === ref) {
+              if (e.data.ok) resolve();
+              else reject(new Error(e.data.error ?? 'MemoryWorker SET failed'));
+            }
+          };
+          memPort!.postMessage({
+            action: 'SET',
+            factoryToken,
+            ref,
+            data: output,
+          });
+        });
+        postWorkerMessage({ ok: true, __memory_ref__: ref });
       } else {
-        postWorkerMessage(result, transfers);
+        // Fallback: no port (e.g. unit tests or opt-out path) — post raw data
+        postWorkerMessage({ ok: true, data: output }, transfers);
       }
     } catch (err) {
       const result = {
@@ -78,12 +102,12 @@ export function defineWorker<TParams = unknown, TResult = unknown>(
   self.addEventListener('message', (event: MessageEvent) => {
     const msg = event.data;
 
-    // 0. MemoryWorker init message — skip and return early.
-    //    The orchestrator always sends { __init_memory_port__: true } first,
-    //    before the real payload. defineWorker always posts raw data back
-    //    via self.postMessage({ ok: true, data: ... }) and never writes to
-    //    the MemoryWorker port, so the port can be safely ignored here.
+    // 0. MemoryWorker init message: handle port and token for Memory mode
     if (msg && msg.__init_memory_port__) {
+      memPort = (event.ports[0] ?? msg.memPort) as MessagePort | null;
+      factoryToken = msg.factoryToken as string | null;
+      if (memPort) memPort.start();
+
       return;
     }
 
@@ -115,7 +139,7 @@ export function defineWorker<TParams = unknown, TResult = unknown>(
 
     // 2. Standalone or first pipeline worker execution
     if (!inputPort) {
-      processData(msg);
+      void processData(msg);
     } else {
       pendingData = msg;
     }

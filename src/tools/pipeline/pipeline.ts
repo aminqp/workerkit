@@ -1,4 +1,4 @@
-import { PipelineStep } from '../main-worker-factory/types';
+import { PipelineStep, CollectedResult } from '../main-worker-factory/types';
 import { WorkerFactory } from '../worker-factory';
 import { WorkerMode } from '../worker-factory/worker-factory';
 import { extractTransferable } from '../extract-transferable';
@@ -20,7 +20,7 @@ import { PipelineContext } from './types';
 export async function executePipeline<TResult = unknown>(
   steps: PipelineStep[],
   context: PipelineContext,
-): Promise<TResult> {
+): Promise<CollectedResult<TResult>> {
   if (context.isTerminated()) {
     context.logger.error(
       'Attempted to execute pipeline after MainWorkerFactory was terminated',
@@ -49,7 +49,7 @@ export async function executePipeline<TResult = unknown>(
     context.trackWorker(factory.getWorker);
     const raw = factory.getWorker;
 
-    return new Promise<TResult>((resolve, reject) => {
+    return new Promise<CollectedResult<TResult>>((resolve, reject) => {
       raw.onmessage = (event) => {
         context.terminateWorker(raw);
         if (event.data?.ok === false) {
@@ -58,7 +58,13 @@ export async function executePipeline<TResult = unknown>(
             event.data.error,
           );
           reject(new Error(event.data.error));
-        } else resolve(event.data?.data as TResult);
+        } else
+          resolve({
+            data: event.data?.data as TResult,
+            succeeded: 1,
+            failed: 0,
+            errors: [],
+          });
       };
       raw.onerror = (event) => {
         context.terminateWorker(raw);
@@ -78,7 +84,7 @@ export async function executePipeline<TResult = unknown>(
   }
 
   // Build the pipeline: connect workers via MessageChannels
-  return new Promise<TResult>(async (resolve, reject) => {
+  return new Promise<CollectedResult<TResult>>(async (resolve, reject) => {
     const workers: Worker[] = [];
     const channels: MessageChannel[] = [];
 
@@ -186,7 +192,13 @@ export async function executePipeline<TResult = unknown>(
       if (event.data?.ok === false) {
         context.logger.error(`Final pipeline step failed`, event.data.error);
         reject(new Error(event.data.error));
-      } else resolve(event.data?.data as TResult);
+      } else
+        resolve({
+          data: event.data?.data as TResult,
+          succeeded: 1,
+          failed: 0,
+          errors: [],
+        });
     };
     lastWorker.onerror = (event) => {
       workers.forEach((worker) => context.terminateWorker(worker));

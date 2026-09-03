@@ -664,7 +664,7 @@ describe('MainWorkerFactory – createWorker support', () => {
     );
 
     const result = await promise;
-    expect(result).toBe('pipeline-create-worker-result');
+    expect(result.data).toBe('pipeline-create-worker-result');
   });
 
   it('runs a persistent worker configured with createWorker', async () => {

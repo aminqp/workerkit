@@ -229,13 +229,15 @@ class MainWorkerFactory<
 
   /**
    * Executes a sequential pipeline of worker steps.
-   * Passes the output (memory reference or raw data) of one step as the input
-   * to the next step.
+   * Passes the output of one step as the input to the next step.
    *
    * @param steps - An array of PipelineStep configurations.
-   * @returns The final result of the pipeline execution.
+   * @returns A CollectedResult containing the final pipeline output and shard stats,
+   *          consistent with the shape returned by `runWorker()`.
    */
-  async pipeline<TResult = unknown>(steps: PipelineStep[]): Promise<TResult> {
+  async pipeline<TResult = unknown>(
+    steps: PipelineStep[],
+  ): Promise<CollectedResult<TResult>> {
     return executePipeline(steps, {
       memoryStore: this._memoryStore,
       memoryWorkerProxy: this._memoryWorkerProxy,

@@ -92,7 +92,7 @@ describe('executePipeline', () => {
     workerInstance.onmessage!({ data: { ok: true, data: 'result' } });
 
     const result = await promise;
-    expect(result).toBe('result');
+    expect(result.data).toBe('result');
     expect(terminateWorkerSpy).toHaveBeenCalledWith(workerInstance);
   });
 
@@ -128,7 +128,7 @@ describe('executePipeline', () => {
     worker2.onmessage!({ data: { ok: true, data: 'final-result' } });
 
     const result = await promise;
-    expect(result).toBe('final-result');
+    expect(result.data).toBe('final-result');
     expect(terminateWorkerSpy).toHaveBeenCalledWith(worker1);
     expect(terminateWorkerSpy).toHaveBeenCalledWith(worker2);
   });

@@ -65,7 +65,7 @@ export function initPipelineBenchCard(foreman: Foreman) {
 
       const pipelineStart = performance.now();
 
-      const pipelineResult: AggregateResult = await foreman.pipeline([
+      const { data: pipelineResult } = await foreman.pipeline<AggregateResult>([
         { worker: 'generateLargeDataset', srcData: { count: RECORD_COUNT } },
         { worker: 'heavyTransform' },
         { worker: 'aggregateResults' },

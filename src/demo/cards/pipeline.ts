@@ -19,7 +19,7 @@ export function initPipelineCard(foreman: Foreman) {
         'fetch → transform → filter (worker-to-worker)…',
       );
 
-      const result: FilteredPost[] = await foreman.pipeline([
+      const { data: result } = await foreman.pipeline<FilteredPost[]>([
         { worker: 'fetchPosts', srcData: { limit: 200 } },
         { worker: 'transformPosts' },
         { worker: 'filterPosts', options: { minWords: 8 } },
