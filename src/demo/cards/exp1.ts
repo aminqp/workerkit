@@ -7,8 +7,9 @@ export function initExpCard(foreman: Foreman) {
     const begin = performance.now();
     setRunning('exp1', btn);
     try {
-      const res = await foreman.runWorker('exp1', { srcData: { seconds: 10 } });
-      const { data } = await foreman.collectResults(res);
+      const { data } = await foreman.runWorker('exp1', {
+        srcData: { seconds: 10 },
+      });
       setDone(
         'exp1',
         btn,

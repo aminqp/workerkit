@@ -15,18 +15,17 @@ import { CollectResultsContext } from './types';
  *
  * If a `reducer` is provided in `options`, it will be used to merge the shards.
  * Otherwise, a default reducer that flats the array will be used.
- * By default, the merge operation is offloaded to an ephemeral Web Worker to avoid
- * blocking the main thread, especially for large datasets.
  *
- * It also handles special `memoryOnly` reference payloads where the worker result
- * is just a token reference rather than actual serialized data.
+ * The merge operation is offloaded to an ephemeral Web Worker. The reducer worker
+ * receives a direct `MessagePort` to the MemoryWorker, so it fetches shard data
+ * directly without routing through the main thread.
  *
  * @template T - The expected type of the data returned from an individual worker.
- * @template R - The expected type of the merged data. Defaults to `T[]` if `T` is not an array, or `Item[]` if `T` is `Item[]`.
+ * @template R - The expected type of the merged data.
  *
  * @param settled - The settled results (`Promise.allSettled` output) from the workers.
  * @param options - Options for collection, such as a custom `reducer` function.
- * @param context - Context object providing logger, worker tracking, and termination checks.
+ * @param context - Context object providing logger, worker tracking, termination checks, and MemoryWorkerProxy.
  * @returns A promise resolving to the collected results containing the merged data, success count, failure count, and errors.
  * @throws Will throw an error if the `MainWorkerFactory` context has been terminated prior to collection.
  */
@@ -52,68 +51,27 @@ export async function collectWorkerResults<
     (result) => result.status === 'rejected',
   ) as PromiseRejectedResult[];
 
-  // If all fulfilled shards returned a memoryOnly reference payload with the same token,
-  // return the single memory reference payload instead of an array of duplicate ref objects.
-  const isMemoryOnlyRef =
-    fulfilled.length > 0 &&
-    fulfilled.every((result) => {
-      const responseData = result.value.successResult?.data as Record<
-        string,
-        unknown
-      >;
-      return (
-        responseData &&
-        typeof responseData === 'object' &&
-        '__memory_ref__' in responseData &&
-        !('data' in responseData)
-      );
-    });
-
-  if (isMemoryOnlyRef) {
-    const firstData = fulfilled[0].value.successResult!.data as R;
+  if (fulfilled.length === 0) {
     return {
-      data: firstData,
-      succeeded: fulfilled.length,
+      data: [] as unknown as R,
+      succeeded: 0,
       failed: errors.length,
       errors,
     };
   }
 
-  // Check if memory ref payload with data (memory: true)
-  const isMemoryRefWithData =
-    fulfilled.length > 0 &&
-    fulfilled.every((result) => {
-      const responseData = result.value.successResult?.data as Record<
-        string,
-        unknown
-      >;
-      return (
-        responseData &&
-        typeof responseData === 'object' &&
-        '__memory_ref__' in responseData &&
-        'data' in responseData
-      );
-    });
-
-  const memoryRefToken = isMemoryRefWithData
-    ? ((fulfilled[0].value.successResult!.data as { __memory_ref__: string })
-        .__memory_ref__ as string)
-    : undefined;
-
-  const shards = fulfilled.map((result) => {
-    const responseData = result.value.successResult!.data;
-    if (
-      isMemoryRefWithData &&
-      responseData &&
-      typeof responseData === 'object' &&
-      'data' in responseData
-    ) {
-      return (responseData as { data: T }).data;
-    }
-    return responseData as T;
+  // Collect the memory refs from settled results.
+  // Workers now store their results in MemoryWorker and only post __memory_ref__ tokens.
+  const memRefs = fulfilled.map((result) => {
+    const d = result.value.successResult?.data as
+      | Record<string, unknown>
+      | undefined;
+    return d?.__memory_ref__ as string | undefined;
   });
 
-  // Build a self-contained merge function for the worker
+  const allHaveMemRefs = memRefs.every((ref) => typeof ref === 'string');
+
+  // Build the reducer source — must be self-contained
   const reducerSrc = options.reducer
     ? options.reducer.toString()
     : '(shards) => shards.flat()';
@@ -121,27 +79,61 @@ export async function collectWorkerResults<
   let mergeResult: R;
 
   if (
+    allHaveMemRefs &&
     typeof Worker !== 'undefined' &&
     typeof Blob !== 'undefined' &&
-    typeof URL !== 'undefined' &&
-    typeof URL.createObjectURL === 'function'
+    typeof MessageChannel !== 'undefined'
   ) {
+    // Allocate a direct port from MemoryWorker to the reducer worker.
+    // The reducer fetches shards directly — the main thread never holds the data.
+    const reducerPort = await context.memoryWorkerProxy.allocateWorkerPort();
+
+    const workerSrc = `
+      const refs = ${JSON.stringify(memRefs)};
+      const factoryToken = ${JSON.stringify(context.factoryToken)};
+      const reducer = ${reducerSrc};
+
+    // collect-results.ts
+
+      self.addEventListener('message', async (event) => {
+        // event.ports[0] is the direct line to MemoryWorker
+        const memPort = event.ports[0];
+        if (!memPort) {
+          self.postMessage({ ok: false, error: 'No MemoryWorker port provided' });
+          self.close();
+          return;
+        }
+        memPort.start();
+
+        try {
+          // Fetch each shard directly from MemoryWorker
+          const shards = await Promise.all(refs.map((ref) =>
+            new Promise((resolve, reject) => {
+              const reqId = 'fetch_' + ref;
+              memPort.addEventListener('message', function handler(e) {
+                if (e.data && e.data.ref === ref) {
+                  memPort.removeEventListener('message', handler);
+                  if (e.data.ok) resolve(e.data.data);
+                  else reject(new Error(e.data.error));
+                }
+              });
+              memPort.postMessage({ action: 'GET', factoryToken, ref, id: reqId });
+            })
+          ));
+
+          const result = reducer(shards);
+          self.postMessage({ ok: true, data: result });
+        } catch (error) {
+          self.postMessage({ ok: false, error: String(error) });
+        } finally {
+          self.close();
+        }
+      });
+    `;
+
     try {
       mergeResult = await new Promise<R>((resolve, reject) => {
-        const workerSrc = `
-          const reducer = ${reducerSrc};
-          self.addEventListener('message', (event) => {
-            try {
-              const result = reducer(event.data);
-              self.postMessage({ ok: true, data: result });
-            } catch (error) {
-              self.postMessage({ ok: false, error: String(error) });
-            }
-          });
-        `;
-        const blob = new Blob([workerSrc], {
-          type: 'application/javascript',
-        });
+        const blob = new Blob([workerSrc], { type: 'application/javascript' });
         const worker = context.trackWorker(
           new Worker(URL.createObjectURL(blob)),
         );
@@ -165,25 +157,43 @@ export async function collectWorkerResults<
           );
           reject(event);
         };
-        worker.postMessage(shards);
+
+        // Transfer the MemoryWorker port to the reducer worker — direct path
+        worker.postMessage({ __start__: true }, [reducerPort]);
       });
     } catch {
+      // Fallback: fetch shards on main thread and merge locally
+      const shards = await Promise.all(
+        (memRefs as string[]).map((ref) => context.memoryWorkerProxy.get(ref)),
+      );
       const defaultReducer = (s: unknown[]) => (s as unknown[][]).flat();
-      const reducer = options.reducer ?? defaultReducer;
-      mergeResult = reducer(shards as T[]) as R;
+      const reducerFn =
+        options.reducer ?? (defaultReducer as unknown as (shards: T[]) => R);
+      mergeResult = reducerFn(shards as T[]);
     }
-  } else {
+  } else if (!allHaveMemRefs) {
+    // Legacy path: shards arrived as raw data (e.g. from createWorker bundler workers)
+    const shards = fulfilled.map((result) => {
+      const d = result.value.successResult!.data;
+      return d as T;
+    });
     const defaultReducer = (s: unknown[]) => (s as unknown[][]).flat();
-    const reducer = options.reducer ?? defaultReducer;
-    mergeResult = reducer(shards as T[]) as R;
+    const reducerFn =
+      options.reducer ?? (defaultReducer as unknown as (shards: T[]) => R);
+    mergeResult = reducerFn(shards);
+  } else {
+    // No Worker/Blob support — merge on main thread using MemoryWorkerProxy
+    const shards = await Promise.all(
+      (memRefs as string[]).map((ref) => context.memoryWorkerProxy.get(ref)),
+    );
+    const defaultReducer = (s: unknown[]) => (s as unknown[][]).flat();
+    const reducerFn =
+      options.reducer ?? (defaultReducer as unknown as (shards: T[]) => R);
+    mergeResult = reducerFn(shards as T[]);
   }
 
-  const finalData = isMemoryRefWithData
-    ? ({ data: mergeResult, __memory_ref__: memoryRefToken } as unknown as R)
-    : mergeResult;
-
   return {
-    data: finalData,
+    data: mergeResult,
     succeeded: fulfilled.length,
     failed: errors.length,
     errors,

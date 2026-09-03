@@ -9,8 +9,10 @@ import {
   WorkerReturnType,
   TypedSettledResults,
   MemoryStats,
+  RunWorkerOptions,
 } from './types';
 import { MemoryStore } from '../memory-store';
+import { MemoryWorkerProxy } from '../memory-store';
 import { Logger, LogLevel } from '../logger';
 import { executeWorker } from '../run-worker';
 
@@ -29,6 +31,11 @@ export { extractTransferable };
  * Provides high-level APIs to configure, dispatch, and monitor workers,
  * handling memory isolation, sharding, and concurrency.
  *
+ * Workers store their results directly into the dedicated `MemoryWorker` thread
+ * via a pre-allocated `MessagePort`. Only lightweight `__memory_ref__` tokens
+ * cross the main thread boundary. `runWorker` auto-collects shards and returns
+ * a `CollectedResult<R>` directly — no manual `collectResults` call needed.
+ *
  * @typeParam TConfigs - A tuple of WorkerConfig configurations.
  */
 class MainWorkerFactory<
@@ -38,6 +45,8 @@ class MainWorkerFactory<
   private readonly _threads: number;
   private readonly _activeWorkers: Set<Worker> = new Set();
   private readonly _memoryStore: MemoryStore = new MemoryStore();
+  private readonly _memoryWorkerProxy: MemoryWorkerProxy;
+  private readonly _factoryToken: string;
   private _isTerminated = false;
 
   private readonly _persistentManager: PersistentWorkerManager;
@@ -63,12 +72,19 @@ class MainWorkerFactory<
         ? navigator.hardwareConcurrency
         : 4;
 
+    // Generate a secret token for MemoryWorker authentication.
+    // All workers spawned by this factory instance use this token.
+    this._factoryToken = crypto.randomUUID();
+    this._memoryWorkerProxy = new MemoryWorkerProxy(this._factoryToken);
+
     const commonContext = {
       isTerminated: () => this.isTerminated,
       findWorkerByName: this.findWorkerByName.bind(this),
       trackWorker: this.trackWorker.bind(this),
       terminateWorker: this.terminateWorker.bind(this),
       logger: this.logger,
+      memoryWorkerProxy: this._memoryWorkerProxy,
+      factoryToken: this._factoryToken,
     };
 
     this._persistentManager = new PersistentWorkerManager(commonContext);
@@ -117,27 +133,37 @@ class MainWorkerFactory<
 
   /**
    * Dispatches a worker task with the given parameters.
-   * Spawns necessary threads, manages sharding, and returns a promise
-   * that resolves to the settled results of all worker threads.
+   *
+   * Workers store their results directly in the `MemoryWorker` thread — large data
+   * never touches the main thread heap. Results are auto-collected and merged in a
+   * dedicated reducer worker. Returns a `CollectedResult<R>` directly.
+   *
+   * Pass `autoCollect: false` in `rawParams` to skip auto-collection and receive
+   * the raw settled state (escape hatch for advanced custom reducers).
    *
    * @param workerName - The name of the registered worker to execute.
-   * @param rawParams - The payload and options for the worker.
-   * @returns A promise resolving to an array of PromiseSettledResults.
+   * @param rawParams - The payload, options, and reducer for the worker.
+   * @returns A promise resolving to a CollectedResult with merged data and shard stats.
    */
-  async runWorker<TName extends keyof WorkerConfigMap<TConfigs> & string>(
+  async runWorker<
+    TName extends keyof WorkerConfigMap<TConfigs> & string,
+    T = WorkerReturnType<WorkerConfigMap<TConfigs>[TName]>,
+    R = T extends (infer Item)[] ? Item[] : T[],
+  >(
     workerName: TName,
     rawParams: {
       srcData?: WorkerDataParam<WorkerConfigMap<TConfigs>[TName]>;
       __memory_ref__?: string;
       deleteMemory?: boolean;
-    } & Record<string, unknown>,
-  ): Promise<
-    TypedSettledResults<WorkerReturnType<WorkerConfigMap<TConfigs>[TName]>>
-  > {
+    } & RunWorkerOptions<T, R> &
+      Record<string, unknown>,
+  ): Promise<CollectedResult<R>> {
     return executeWorker(workerName, rawParams, {
       isTerminated: () => this.isTerminated,
       findWorkerByName: this.findWorkerByName.bind(this),
       memoryStore: this._memoryStore,
+      memoryWorkerProxy: this._memoryWorkerProxy,
+      factoryToken: this._factoryToken,
       threads: this._threads,
       orchestrator: this._orchestrator,
       logger: this.logger,
@@ -145,20 +171,22 @@ class MainWorkerFactory<
   }
 
   /**
-   * Deletes a specific reference from the isolated memory store.
+   * Deletes a specific reference from the memory store and MemoryWorker.
    *
    * @param ref - The memory reference ID to delete.
    * @returns True if the reference existed and was deleted, false otherwise.
    */
   async deleteMemory(ref: string): Promise<boolean> {
-    return this._memoryStore.delete(ref);
+    this._memoryStore.delete(ref);
+    return this._memoryWorkerProxy.delete(ref);
   }
 
   /**
-   * Clears all references from the isolated memory store.
+   * Clears all references from the memory store and MemoryWorker.
    */
   async clearMemory(): Promise<void> {
     this._memoryStore.clear();
+    await this._memoryWorkerProxy.clear();
   }
 
   /**
@@ -167,15 +195,18 @@ class MainWorkerFactory<
    * @returns The MemoryStats containing count and active reference IDs.
    */
   async getMemoryStats(): Promise<MemoryStats> {
-    return this._memoryStore.stats();
+    return this._memoryWorkerProxy.stats();
   }
 
   /**
    * Collects and reduces the results from a `runWorker` execution.
-   * Typically spawns a background worker to run the reducer to avoid blocking
-   * the main thread.
    *
-   * @param settled - The settled results from `runWorker`.
+   * @deprecated `runWorker` now auto-collects results. This method is kept as
+   * an escape hatch for advanced cases where `autoCollect: false` was passed to
+   * `runWorker`. In the common case, the return value of `runWorker` already
+   * contains the merged `CollectedResult`.
+   *
+   * @param settled - The settled results from `runWorker` (when `autoCollect: false`).
    * @param options - Options containing the reducer function.
    * @returns A structured CollectedResult object.
    */
@@ -191,6 +222,8 @@ class MainWorkerFactory<
       trackWorker: this.trackWorker.bind(this),
       terminateWorker: this.terminateWorker.bind(this),
       logger: this.logger,
+      memoryWorkerProxy: this._memoryWorkerProxy,
+      factoryToken: this._factoryToken,
     });
   }
 
@@ -205,6 +238,7 @@ class MainWorkerFactory<
   async pipeline<TResult = unknown>(steps: PipelineStep[]): Promise<TResult> {
     return executePipeline(steps, {
       memoryStore: this._memoryStore,
+      memoryWorkerProxy: this._memoryWorkerProxy,
       isTerminated: () => this.isTerminated,
       findWorkerByName: this.findWorkerByName.bind(this),
       trackWorker: this.trackWorker.bind(this),
@@ -239,7 +273,7 @@ class MainWorkerFactory<
   }
 
   /**
-   * Terminates all active worker threads, persistent workers, and clears the memory store.
+   * Terminates all active worker threads, persistent workers, MemoryWorker, and clears the memory store.
    * Marks this factory instance as terminated.
    */
   terminate(): void {
@@ -250,6 +284,7 @@ class MainWorkerFactory<
     }
     this._activeWorkers.clear();
     this._memoryStore.clear();
+    this._memoryWorkerProxy.terminate();
   }
 
   /**

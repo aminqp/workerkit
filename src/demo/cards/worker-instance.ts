@@ -10,13 +10,12 @@ export function initWorkerInstanceCard(foreman: Foreman) {
     const begin = performance.now();
     setRunning('worker-instance', btn);
     try {
-      const res = await foreman.runWorker('webpackCreateWorker', {
+      const { data } = await foreman.runWorker('webpackCreateWorker', {
         srcData: {
           message: 'Hello from createWorker factory pattern!',
           timestamp: new Date().toISOString(),
         },
       });
-      const { data } = await foreman.collectResults(res);
       const lines = [
         'createWorker execution completed successfully across threads:',
         '',

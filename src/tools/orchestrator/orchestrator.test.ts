@@ -3,11 +3,15 @@ import { WorkerOrchestrator } from './orchestrator';
 import { OrchestratorContext } from './types';
 import { WorkerFactory } from '../worker-factory';
 
-vi.mock('../worker-factory', () => {
+vi.mock('../worker-factory', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../worker-factory')>();
   return {
+    ...actual,
     WorkerFactory: vi.fn(),
   };
 });
+
+const flushPromises = () => new Promise((resolve) => setImmediate(resolve));
 
 describe('WorkerOrchestrator', () => {
   let context: OrchestratorContext;
@@ -42,6 +46,10 @@ describe('WorkerOrchestrator', () => {
         error: vi.fn(),
         verbose: vi.fn(),
       } as unknown as OrchestratorContext['logger'],
+      memoryWorkerProxy: {
+        allocateWorkerPort: vi.fn().mockResolvedValue({} as MessagePort),
+      } as unknown as OrchestratorContext['memoryWorkerProxy'],
+      factoryToken: 'test-token',
     };
 
     orchestrator = new WorkerOrchestrator(context);
@@ -142,6 +150,7 @@ describe('WorkerOrchestrator', () => {
       0,
     );
 
+    await flushPromises();
     mockWorker.onmessage!({ data: { ok: true, data: 'success-result' } });
 
     const result = await promise;
@@ -162,11 +171,11 @@ describe('WorkerOrchestrator', () => {
       1,
     );
 
+    await flushPromises();
     mockWorker.onerror!(new Error('crash'));
 
-    setTimeout(() => {
-      mockWorker.onmessage!({ data: { ok: true, data: 'retry-success' } });
-    }, 10);
+    await flushPromises();
+    mockWorker.onmessage!({ data: { ok: true, data: 'retry-success' } });
 
     const result = await promise;
     expect(result.index).toBe(0);
@@ -188,11 +197,11 @@ describe('WorkerOrchestrator', () => {
       1,
     );
 
+    await flushPromises();
     mockWorker.onmessage!({ data: { ok: false, error: 'first fail' } });
 
-    setTimeout(() => {
-      mockWorker.onerror!(new Error('second fail'));
-    }, 10);
+    await flushPromises();
+    mockWorker.onerror!(new Error('second fail'));
 
     await expect(promise).rejects.toMatchObject({
       index: 0,

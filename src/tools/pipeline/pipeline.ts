@@ -78,7 +78,7 @@ export async function executePipeline<TResult = unknown>(
   }
 
   // Build the pipeline: connect workers via MessageChannels
-  return new Promise<TResult>((resolve, reject) => {
+  return new Promise<TResult>(async (resolve, reject) => {
     const workers: Worker[] = [];
     const channels: MessageChannel[] = [];
 
@@ -219,9 +219,10 @@ export async function executePipeline<TResult = unknown>(
         );
         return;
       }
-      firstPayloadData = context.memoryStore.get(memoryRef);
+      firstPayloadData = await context.memoryWorkerProxy.get(memoryRef);
       if (shouldDeleteMemory) {
         context.memoryStore.delete(memoryRef);
+        await context.memoryWorkerProxy.delete(memoryRef);
       }
       delete initialParams.__memory_ref__;
       delete initialParams.deleteMemory;

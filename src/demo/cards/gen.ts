@@ -7,10 +7,9 @@ export function initGenCard(foreman: Foreman) {
     const begin = performance.now();
     setRunning('gen', btn);
     try {
-      const res = await foreman.runWorker('generateRandomData', {
+      const { data } = await foreman.runWorker('generateRandomData', {
         srcData: { count: 300000 },
       });
-      const { data } = await foreman.collectResults(res);
       setDone(
         'gen',
         btn,

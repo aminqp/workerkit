@@ -13,16 +13,14 @@ export function initListCard(foreman: Foreman) {
     const begin = performance.now();
     setRunning('list', btn);
     try {
-      const genRes = await foreman.runWorker(
+      const { data: testData } = await foreman.runWorker(
         'generateListTransformArrayTestData',
         { srcData: { count: 30000 } },
       );
-      const { data: testData } = await foreman.collectResults(genRes);
       setStatus('list', 'running', `transforming ${testData.length} records…`);
-      const transformRes = await foreman.runWorker('listTransformArray', {
+      const { data: result } = await foreman.runWorker('listTransformArray', {
         srcData: testData,
       });
-      const { data: result } = await foreman.collectResults(transformRes);
       setDone(
         'list',
         btn,

@@ -7,10 +7,9 @@ export function initFetchCard(foreman: Foreman) {
     const begin = performance.now();
     setRunning('fetch', btn);
     try {
-      const res = await foreman.runWorker('fetchAndEnrichPosts', {
+      const { data } = await foreman.runWorker('fetchAndEnrichPosts', {
         srcData: { limit: 20 },
       });
-      const { data } = await foreman.collectResults(res);
       const posts = data as EnrichedPost[];
       const lines = [
         `${posts.length} posts fetched and enriched`,

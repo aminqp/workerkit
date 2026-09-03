@@ -11,7 +11,7 @@ export function initBundlerCard(foreman: Foreman) {
     const begin = performance.now();
     setRunning('bundler', btn);
     try {
-      const res = await foreman.runWorker('bundlerLuxonI18n', {
+      const { data } = await foreman.runWorker('bundlerLuxonI18n', {
         srcData: {
           locale: 'es',
           items: [
@@ -21,7 +21,6 @@ export function initBundlerCard(foreman: Foreman) {
           ],
         },
       });
-      const { data } = await foreman.collectResults(res);
       const items = data as TransformedItem[];
       const lines = [
         `${items.length} items transformed in worker with Luxon & i18next:`,

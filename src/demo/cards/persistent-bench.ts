@@ -45,11 +45,10 @@ export function initPersistentBenchCard(foreman: Foreman) {
       const traditionalStart = performance.now();
 
       for (const config of CONFIGS) {
-        const res = await foreman.runWorker('persistentTransform', {
+        await foreman.runWorker('persistentTransform', {
           srcData: dataset,
           config,
         });
-        await foreman.collectResults(res);
       }
 
       const traditionalMs = Math.round(performance.now() - traditionalStart);

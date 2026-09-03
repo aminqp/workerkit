@@ -13,19 +13,13 @@ export function initLogsCard(foreman: Foreman) {
     const begin = performance.now();
     setRunning('logs', btn);
     try {
-      const genRes = await foreman.runWorker('generateLogs', {
+      const { data: logs } = await foreman.runWorker('generateLogs', {
         srcData: { count: 500000 },
       });
-      const { data: logs } = await foreman.collectResults(genRes);
       setStatus('logs', 'running', `analysing ${logs.length} log entries…`);
 
-      const analyzeRes = await foreman.runWorker('analyzeLogs', {
+      const { data: merged } = await foreman.runWorker('analyzeLogs', {
         srcData: logs,
-      });
-
-      // merge shard reports off the main thread using a custom reducer
-      setStatus('logs', 'running', 'merging shard reports…');
-      const { data: merged } = await foreman.collectResults(analyzeRes, {
         reducer: (shards: LogReport[]) => {
           const acc = {
             total: 0,

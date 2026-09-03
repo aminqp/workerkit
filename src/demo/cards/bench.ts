@@ -39,12 +39,10 @@ export function initBenchCard(foreman: Foreman) {
       size: BENCH_SIZE,
     }));
     const workerStart = performance.now();
-    const workerRes = await foreman.runWorker('multiplyMatrices', {
+    const { data: workerTasks } = await foreman.runWorker('multiplyMatrices', {
       srcData: tasks,
     });
     const workerTotalMs = Math.round(performance.now() - workerStart);
-
-    const { data: workerTasks } = await foreman.collectResults(workerRes);
 
     const speedup = (mainResult.totalMs / workerTotalMs).toFixed(2);
     workerEl.textContent = `${workerTotalMs} ms`;

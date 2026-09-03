@@ -1,1 +1,1 @@
-export { default as WorkerFactory } from './worker-factory';
+export { default as WorkerFactory, WorkerMode } from './worker-factory';

@@ -13,16 +13,15 @@ export function initTransformCard(foreman: Foreman) {
     const begin = performance.now();
     setRunning('transform', btn);
     try {
-      const genRes = await foreman.runWorker('generateRandomData', {
+      const { data: testData } = await foreman.runWorker('generateRandomData', {
         srcData: { count: 300000 },
       });
-      const { data: testData } = await foreman.collectResults(genRes);
       setStatus(
         'transform',
         'running',
         `transforming ${testData.length} items…`,
       );
-      const transformRes = await foreman.runWorker('transformArray', {
+      const { data: result } = await foreman.runWorker('transformArray', {
         srcData: testData,
         options: {
           prefix: 'pre',
@@ -32,7 +31,6 @@ export function initTransformCard(foreman: Foreman) {
           multiplier: 'multiplier',
         },
       });
-      const { data: result } = await foreman.collectResults(transformRes);
       setDone(
         'transform',
         btn,

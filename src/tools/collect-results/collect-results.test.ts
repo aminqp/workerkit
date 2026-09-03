@@ -20,6 +20,15 @@ describe('collectWorkerResults', () => {
       logger: mockLogger as unknown as CollectResultsContext['logger'],
       trackWorker: vi.fn((w) => w),
       terminateWorker: vi.fn(),
+      memoryWorkerProxy: {
+        allocateWorkerPort: vi.fn().mockResolvedValue({} as MessagePort),
+        get: vi.fn((ref: string) => {
+          if (ref === 'ref-1') return [1];
+          if (ref === 'ref-2') return [2];
+          return [];
+        }),
+      } as unknown as CollectResultsContext['memoryWorkerProxy'],
+      factoryToken: 'test-token',
     };
   });
 
@@ -107,70 +116,20 @@ describe('collectWorkerResults', () => {
     expect(result.errors).toEqual([]);
   });
 
-  it('should handle memoryOnly reference payload correctly', async () => {
-    const settled = new TypedSettledResults<unknown>([
-      {
-        status: 'fulfilled',
-        value: {
-          successResult: { data: { __memory_ref__: 'token-123' } },
-        } as unknown as WorkerResult,
-      },
-      {
-        status: 'fulfilled',
-        value: {
-          successResult: { data: { __memory_ref__: 'token-123' } },
-        } as unknown as WorkerResult,
-      },
-    ]);
-
-    const result = await collectWorkerResults(settled, {}, mockContext);
-
-    expect(result.data).toEqual({ __memory_ref__: 'token-123' });
-    expect(result.succeeded).toBe(2);
-    expect(result.failed).toBe(0);
-    expect(result.errors).toEqual([]);
-  });
-
-  it('should handle memory reference with data correctly', async () => {
-    const settled = new TypedSettledResults<unknown>([
-      {
-        status: 'fulfilled',
-        value: {
-          successResult: {
-            data: { __memory_ref__: 'token-456', data: [1, 2] },
-          },
-        } as unknown as WorkerResult,
-      },
-      {
-        status: 'fulfilled',
-        value: {
-          successResult: {
-            data: { __memory_ref__: 'token-456', data: [3, 4] },
-          },
-        } as unknown as WorkerResult,
-      },
-    ]);
-
-    const result = await collectWorkerResults(settled, {}, mockContext);
-
-    expect(result.data).toEqual({
-      __memory_ref__: 'token-456',
-      data: [1, 2, 3, 4],
-    });
-    expect(result.succeeded).toBe(2);
-    expect(result.failed).toBe(0);
-    expect(result.errors).toEqual([]);
-  });
+  // The memory_ref handling (memoryOnly, etc) was moved to executeWorker in run-worker.ts
+  // collectWorkerResults now strictly fetches from MemoryWorkerProxy and merges data.
 
   describe('Worker offloading', () => {
     let originalWorker: typeof Worker;
     let originalURL: typeof URL;
     let originalBlob: typeof Blob;
+    let originalMessageChannel: typeof MessageChannel;
 
     beforeEach(() => {
       originalWorker = globalThis.Worker;
       originalURL = globalThis.URL;
       originalBlob = globalThis.Blob;
+      originalMessageChannel = globalThis.MessageChannel;
 
       // Mock Blob
       globalThis.Blob = class BlobMock {
@@ -186,16 +145,22 @@ describe('collectWorkerResults', () => {
         createObjectURL: vi.fn().mockReturnValue('blob:mock'),
       } as unknown as typeof URL;
 
+      // Mock MessageChannel
+      globalThis.MessageChannel = class {
+        port1 = {} as MessagePort;
+        port2 = {} as MessagePort;
+      } as unknown as typeof MessageChannel;
+
       // Mock Worker
       globalThis.Worker = class WorkerMock {
         onmessage?: (ev: MessageEvent) => void;
         onerror?: (ev: ErrorEvent) => void;
-        postMessage(data: unknown[]) {
+        postMessage(_: unknown[]) {
           // Simulate worker message processing synchronously for test
           setTimeout(() => {
             if (this.onmessage) {
               this.onmessage({
-                data: { ok: true, data: data.flat() },
+                data: { ok: true, data: [1, 2] },
               } as MessageEvent);
             }
           }, 0);
@@ -207,17 +172,22 @@ describe('collectWorkerResults', () => {
       globalThis.Worker = originalWorker;
       globalThis.URL = originalURL;
       globalThis.Blob = originalBlob;
+      globalThis.MessageChannel = originalMessageChannel;
     });
 
     it('should offload reducing to a Web Worker if available', async () => {
       const settled = new TypedSettledResults<number[]>([
         {
           status: 'fulfilled',
-          value: { successResult: { data: [1] } } as unknown as WorkerResult,
+          value: {
+            successResult: { data: { __memory_ref__: 'ref-1' } },
+          } as unknown as WorkerResult,
         },
         {
           status: 'fulfilled',
-          value: { successResult: { data: [2] } } as unknown as WorkerResult,
+          value: {
+            successResult: { data: { __memory_ref__: 'ref-2' } },
+          } as unknown as WorkerResult,
         },
       ]);
 
@@ -238,11 +208,15 @@ describe('collectWorkerResults', () => {
       const settled = new TypedSettledResults<number[]>([
         {
           status: 'fulfilled',
-          value: { successResult: { data: [1] } } as unknown as WorkerResult,
+          value: {
+            successResult: { data: { __memory_ref__: 'ref-1' } },
+          } as unknown as WorkerResult,
         },
         {
           status: 'fulfilled',
-          value: { successResult: { data: [2] } } as unknown as WorkerResult,
+          value: {
+            successResult: { data: { __memory_ref__: 'ref-2' } },
+          } as unknown as WorkerResult,
         },
       ]);
 
@@ -270,7 +244,9 @@ describe('collectWorkerResults', () => {
       const settled = new TypedSettledResults<number[]>([
         {
           status: 'fulfilled',
-          value: { successResult: { data: [1] } } as unknown as WorkerResult,
+          value: {
+            successResult: { data: { __memory_ref__: 'ref-1' } },
+          } as unknown as WorkerResult,
         },
       ]);
 
@@ -300,7 +276,9 @@ describe('collectWorkerResults', () => {
       const settled = new TypedSettledResults<number[]>([
         {
           status: 'fulfilled',
-          value: { successResult: { data: [1] } } as unknown as WorkerResult,
+          value: {
+            successResult: { data: { __memory_ref__: 'ref-1' } },
+          } as unknown as WorkerResult,
         },
       ]);
 

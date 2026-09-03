@@ -13,15 +13,12 @@ export function initImageCard(foreman: Foreman) {
     const begin = performance.now();
     setRunning('image', btn);
     try {
-      const genResults = await Promise.all(
+      const images = await Promise.all(
         Array.from({ length: 4 }, () =>
           foreman.runWorker('generateImageData', {
             srcData: { width: 512, height: 512 },
           }),
         ),
-      );
-      const images = await Promise.all(
-        genResults.map((r) => foreman.collectResults(r)),
       );
       const imgData = images.map((r) => (r.data as ImageData[])[0]);
 
@@ -31,13 +28,10 @@ export function initImageCard(foreman: Foreman) {
         `processing ${imgData.length} × 512×512 images…`,
       );
 
-      const processResults = await Promise.all(
+      const processed = await Promise.all(
         imgData.map((img) =>
           foreman.runWorker('processImageData', { srcData: img }),
         ),
-      );
-      const processed = await Promise.all(
-        processResults.map((r) => foreman.collectResults(r)),
       );
 
       const summary = processed

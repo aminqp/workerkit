@@ -13,24 +13,22 @@ export function initDelayedCard(foreman: Foreman) {
     const begin = performance.now();
     setRunning('delayed', btn);
     try {
-      const genRes = await foreman.runWorker('generateDelayedTasks', {
+      const { data: tasks } = await foreman.runWorker('generateDelayedTasks', {
         srcData: { count: 6, minMs: 2000, maxMs: 5000 },
       });
-      const { data: tasks } = await foreman.collectResults(genRes);
       setStatus(
         'delayed',
         'running',
         `running ${tasks.length} tasks concurrently…`,
       );
 
-      const taskRes = await foreman.runWorker('runDelayedTask', {
-        srcData: tasks,
-      });
       const {
         data: results,
         succeeded,
         failed,
-      } = await foreman.collectResults(taskRes);
+      } = await foreman.runWorker('runDelayedTask', {
+        srcData: tasks,
+      });
 
       const summary = [
         `${succeeded} / ${succeeded + failed} tasks completed`,

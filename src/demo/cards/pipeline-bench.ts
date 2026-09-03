@@ -33,20 +33,23 @@ export function initPipelineBenchCard(foreman: Foreman) {
       );
       const traditionalStart = performance.now();
 
-      const genRes = await foreman.runWorker('generateLargeDataset', {
-        srcData: { count: RECORD_COUNT },
-      });
-      const { data: rawData } = await foreman.collectResults(genRes);
+      const { data: rawData } = await foreman.runWorker(
+        'generateLargeDataset',
+        {
+          srcData: { count: RECORD_COUNT },
+        },
+      );
 
-      const transformRes = await foreman.runWorker('heavyTransform', {
+      const { data: transformed } = await foreman.runWorker('heavyTransform', {
         srcData: rawData,
       });
-      const { data: transformed } = await foreman.collectResults(transformRes);
 
-      const aggRes = await foreman.runWorker('aggregateResults', {
-        srcData: transformed,
-      });
-      const { data: traditionalResult } = await foreman.collectResults(aggRes);
+      const { data: traditionalResult } = await foreman.runWorker(
+        'aggregateResults',
+        {
+          srcData: transformed,
+        },
+      );
 
       const traditionalMs = Math.round(performance.now() - traditionalStart);
       traditionalEl.textContent = `${traditionalMs} ms`;

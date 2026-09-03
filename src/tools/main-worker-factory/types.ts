@@ -181,6 +181,9 @@ export interface WorkerResult {
 /**
  * Typed wrapper around the settled results from `runWorker`.
  * Carries `T` (the worker's return type) so `collectResults` can infer it.
+ *
+ * @internal Not part of the public API. `runWorker` now returns `CollectedResult<R>` directly.
+ * @deprecated Use the return value of `runWorker` directly.
  */
 export class TypedSettledResults<T> {
   constructor(public readonly results: PromiseSettledResult<WorkerResult>[]) {}
@@ -188,7 +191,7 @@ export class TypedSettledResults<T> {
   declare readonly __type: T;
 }
 
-/** Options for collectResults */
+/** Options passed to `collectResults` (kept for the opt-out escape hatch). */
 export interface CollectOptions<T, R = T[]> {
   /**
    * Custom reducer applied to the array of fulfilled shard values.
@@ -202,6 +205,27 @@ export interface CollectOptions<T, R = T[]> {
   reducer?: (shards: T[]) => R;
 }
 
+/**
+ * Options that can be passed alongside `srcData` in `runWorker` to control
+ * auto-collection behaviour.
+ */
+export interface RunWorkerOptions<T = unknown, R = T[]> {
+  /**
+   * Custom reducer to merge shard results.
+   * Must be a self-contained function (no closures over external variables)
+   * since it is serialised via `.toString()` and run inside a worker.
+   * Defaults to `(shards) => shards.flat()`.
+   */
+  reducer?: (shards: T[]) => R;
+  /**
+   * Set to `false` to skip auto-collection and receive a `TypedSettledResults`
+   * object instead of `CollectedResult`. Useful for advanced scenarios where
+   * you need to call `collectResults` with custom options manually.
+   * @default true
+   */
+  autoCollect?: boolean;
+}
+
 /** Result returned by collectResults */
 export interface CollectedResult<R> {
   /** The merged output produced by the reducer */
@@ -212,6 +236,12 @@ export interface CollectedResult<R> {
   failed: number;
   /** Raw rejected results, if any */
   errors: PromiseRejectedResult[];
+  /**
+   * Present when the worker config has `memory: true`.
+   * The ref under which the merged result is stored in MemoryWorker,
+   * allowing it to be passed to subsequent workers without re-serializing.
+   */
+  __memory_ref__?: string;
 }
 
 /** A single step in a worker pipeline */

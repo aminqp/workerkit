@@ -78,6 +78,15 @@ export function defineWorker<TParams = unknown, TResult = unknown>(
   self.addEventListener('message', (event: MessageEvent) => {
     const msg = event.data;
 
+    // 0. MemoryWorker init message — skip and return early.
+    //    The orchestrator always sends { __init_memory_port__: true } first,
+    //    before the real payload. defineWorker always posts raw data back
+    //    via self.postMessage({ ok: true, data: ... }) and never writes to
+    //    the MemoryWorker port, so the port can be safely ignored here.
+    if (msg && msg.__init_memory_port__) {
+      return;
+    }
+
     // 1. Pipeline ports configuration message
     if (msg && msg.__pipeline_ports__) {
       if (msg.stepParams) {

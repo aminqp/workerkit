@@ -26,16 +26,16 @@ export function initMemoryCard(foreman: Foreman) {
           'generating 250,000 items (memoryOnly: true)…',
         );
 
-        // Step 1: Run producer configured with memoryOnly: true
-        const genRes = await foreman.runWorker('generateMemoryData', {
-          srcData: { count: 250000 },
-        });
+        // Step 1: Run producer — result stored in MemoryWorker, ref returned
+        const { __memory_ref__: ref } = await foreman.runWorker(
+          'generateMemoryData',
+          {
+            srcData: { count: 250000 },
+          },
+        );
 
-        const genCollected = await foreman.collectResults(genRes);
-        const memoryPayload = genCollected.data as unknown as {
-          __memory_ref__: string;
-        };
-        const ref = memoryPayload.__memory_ref__;
+        if (!ref)
+          throw new Error('Expected a memory ref from generateMemoryData');
 
         setStatus(
           'memory',
@@ -44,13 +44,10 @@ export function initMemoryCard(foreman: Foreman) {
         );
 
         // Step 2: Run consumer worker passing __memory_ref__ and deleteMemory: true
-        const processRes = await foreman.runWorker('processMemoryData', {
+        const { data: result } = await foreman.runWorker('processMemoryData', {
           __memory_ref__: ref,
           options: { multiplier: 3 },
         });
-
-        const processCollected = await foreman.collectResults(processRes);
-        const result = processCollected.data;
 
         const statsAfter = await foreman.getMemoryStats();
 

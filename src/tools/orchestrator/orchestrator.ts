@@ -3,7 +3,7 @@ import {
   WorkerInstanceConfig,
   WorkerResult,
 } from '../main-worker-factory/types';
-import { WorkerFactory } from '../worker-factory';
+import { WorkerFactory, WorkerMode } from '../worker-factory';
 import { extractTransferable } from '../extract-transferable';
 import { OrchestratorContext } from './types';
 
@@ -64,13 +64,17 @@ export class WorkerOrchestrator {
     }
   }
 
-  private initiateWorker({
+  private async initiateWorker({
     workerFunc,
     createWorker,
     workerName,
     index,
     data,
   }: WorkerInstanceConfig): Promise<WorkerResult> {
+    // Allocate a direct MessagePort to MemoryWorker for this computing worker.
+    // The worker will store its result there and only post back a ref token.
+    const memPort = await this.context.memoryWorkerProxy.allocateWorkerPort();
+
     return new Promise((resolve, reject) => {
       if (this.context.isTerminated()) {
         reject(new Error('MainWorkerFactory has been terminated'));
@@ -79,6 +83,7 @@ export class WorkerOrchestrator {
 
       const factory = new WorkerFactory(workerFunc, {
         createWorker,
+        mode: WorkerMode.Memory,
       });
       const raw = this.context.trackWorker(factory.getWorker);
 
@@ -115,8 +120,16 @@ export class WorkerOrchestrator {
           });
           return;
         }
+
+        // Memory mode: worker posts { ok: true, __memory_ref__ }
+        // Legacy fallback: worker posts { ok: true, data: ... }
+        const memRef = event.data?.__memory_ref__ as string | undefined;
         const payloadData =
-          event.data?.ok !== undefined ? event.data.data : event.data;
+          memRef !== undefined
+            ? { __memory_ref__: memRef }
+            : event.data?.ok !== undefined
+              ? event.data.data
+              : event.data;
 
         resolve({
           index,
@@ -138,6 +151,18 @@ export class WorkerOrchestrator {
         index,
         ...(Array.isArray(data) ? { data } : (data as Record<string, unknown>)),
       };
+
+      // First: send the MemoryWorker port as a Transferable init message.
+      // The worker will queue any computation payload until this is received.
+      raw.postMessage(
+        {
+          __init_memory_port__: true,
+          factoryToken: this.context.factoryToken,
+        },
+        [memPort],
+      );
+
+      // Then: send the actual computation payload.
       raw.postMessage(payload, extractTransferable(payload));
     });
   }

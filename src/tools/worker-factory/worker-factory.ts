@@ -1,5 +1,22 @@
 import { WorkerFunction } from '../main-worker-factory/types';
 
+/** Shared extractTransferables helper embedded into every worker script. */
+const EXTRACT_TRANSFERABLES_SRC = `
+const extractTransferables = (value, seen = new Set()) => {
+  if (value === null || typeof value !== 'object') return [];
+  if (seen.has(value)) return [];
+  seen.add(value);
+  if (value instanceof ArrayBuffer || value instanceof MessagePort ||
+      (typeof ImageBitmap !== 'undefined' && value instanceof ImageBitmap) ||
+      (typeof OffscreenCanvas !== 'undefined' && value instanceof OffscreenCanvas)) {
+    return [value];
+  }
+  if (ArrayBuffer.isView(value)) return [value.buffer];
+  if (Array.isArray(value)) return value.flatMap(i => extractTransferables(i, seen));
+  return Object.values(value).flatMap(v => extractTransferables(v, seen));
+};
+`;
+
 /**
  * Generates the source code for an inline worker script that wraps a
  * serialized user function.
@@ -16,20 +33,7 @@ import { WorkerFunction } from '../main-worker-factory/types';
  *   `Blob` worker.
  */
 const workerTemplate = (func: string) => `
-const extractTransferables = (value, seen = new Set()) => {
-  if (value === null || typeof value !== 'object') return [];
-  if (seen.has(value)) return [];
-  seen.add(value);
-  if (value instanceof ArrayBuffer || value instanceof MessagePort ||
-      (typeof ImageBitmap !== 'undefined' && value instanceof ImageBitmap) ||
-      (typeof OffscreenCanvas !== 'undefined' && value instanceof OffscreenCanvas)) {
-    return [value];
-  }
-  if (ArrayBuffer.isView(value)) return [value.buffer];
-  if (Array.isArray(value)) return value.flatMap(i => extractTransferables(i, seen));
-  return Object.values(value).flatMap(v => extractTransferables(v, seen));
-};
-
+${EXTRACT_TRANSFERABLES_SRC}
 self.addEventListener('message', async (event) => {
   try {
     const output = await ${func}(event.data);
@@ -38,6 +42,77 @@ self.addEventListener('message', async (event) => {
     self.postMessage({ ok: false, error: err instanceof Error ? err.message : String(err) });
   }
 })
+`;
+
+/**
+ * Generates a memory-aware worker script that stores its result **directly**
+ * into the MemoryWorker thread via a pre-allocated `MessagePort`.
+ *
+ * Flow:
+ * 1. Main thread sends an init message `{ __init_memory_port__: true, factoryToken }` with
+ *    the worker-side MessagePort as a Transferable.
+ * 2. Worker computes its result and posts it to the MemoryWorker via the port.
+ * 3. MemoryWorker stores the data and returns a `__memory_ref__` token.
+ * 4. Worker posts only `{ ok: true, __memory_ref__ }` back to the main thread.
+ *
+ * Large data never touches the main thread heap.
+ *
+ * @param func - The stringified worker function (via `.toString()`).
+ */
+const memoryWorkerTemplate = (func: string) => `
+${EXTRACT_TRANSFERABLES_SRC}
+const workerFn = ${func};
+let memPort = null;
+let factoryToken = null;
+let pendingPayload = null;
+
+async function runAndStore(payload) {
+  try {
+    const output = await workerFn(payload);
+    if (!memPort) {
+      // Fallback: no port provided, post data directly (legacy / opt-out path)
+      self.postMessage({ ok: true, data: output }, extractTransferables(output));
+      return;
+    }
+    // Store directly into MemoryWorker
+    const ref = 'mem_' + crypto.randomUUID();
+    await new Promise((resolve, reject) => {
+      memPort.onmessage = (e) => {
+        if (e.data && e.data.ref === ref) {
+          if (e.data.ok) resolve(e.data.ref);
+          else reject(new Error(e.data.error || 'MemoryWorker SET failed'));
+        }
+      };
+      memPort.postMessage({ action: 'SET', factoryToken, ref, data: output });
+    });
+    // Only the token reaches the main thread
+    self.postMessage({ ok: true, __memory_ref__: ref });
+  } catch (err) {
+    self.postMessage({ ok: false, error: err instanceof Error ? err.message : String(err) });
+  }
+}
+
+self.addEventListener('message', async (event) => {
+  // Init message: receive the MemoryWorker port and factory token
+  if (event.data && event.data.__init_memory_port__) {
+    memPort = event.ports[0] ?? event.data.memPort;
+    factoryToken = event.data.factoryToken;
+    if (memPort) memPort.start();
+    // If a payload arrived before the port, process it now
+    if (pendingPayload !== null) {
+      const p = pendingPayload;
+      pendingPayload = null;
+      await runAndStore(p);
+    }
+    return;
+  }
+  // If port not yet received, queue the payload
+  if (!memPort) {
+    pendingPayload = event.data;
+    return;
+  }
+  await runAndStore(event.data);
+});
 `;
 
 /**
@@ -51,20 +126,7 @@ self.addEventListener('message', async (event) => {
  * @param func - The stringified worker function (via `.toString()`).
  */
 const pipelineWorkerTemplate = (func: string) => `
-const extractTransferables = (value, seen = new Set()) => {
-  if (value === null || typeof value !== 'object') return [];
-  if (seen.has(value)) return [];
-  seen.add(value);
-  if (value instanceof ArrayBuffer || value instanceof MessagePort ||
-      (typeof ImageBitmap !== 'undefined' && value instanceof ImageBitmap) ||
-      (typeof OffscreenCanvas !== 'undefined' && value instanceof OffscreenCanvas)) {
-    return [value];
-  }
-  if (ArrayBuffer.isView(value)) return [value.buffer];
-  if (Array.isArray(value)) return value.flatMap(i => extractTransferables(i, seen));
-  return Object.values(value).flatMap(v => extractTransferables(v, seen));
-};
-
+${EXTRACT_TRANSFERABLES_SRC}
 const workerFn = ${func};
 let outputPort = null;
 let inputPort = null;
@@ -148,20 +210,7 @@ self.addEventListener('message', (event) => {
  * @param func - The stringified worker function (via `.toString()`).
  */
 const persistentWorkerTemplate = (func: string) => `
-const extractTransferables = (value, seen = new Set()) => {
-  if (value === null || typeof value !== 'object') return [];
-  if (seen.has(value)) return [];
-  seen.add(value);
-  if (value instanceof ArrayBuffer || value instanceof MessagePort ||
-      (typeof ImageBitmap !== 'undefined' && value instanceof ImageBitmap) ||
-      (typeof OffscreenCanvas !== 'undefined' && value instanceof OffscreenCanvas)) {
-    return [value];
-  }
-  if (ArrayBuffer.isView(value)) return [value.buffer];
-  if (Array.isArray(value)) return value.flatMap(i => extractTransferables(i, seen));
-  return Object.values(value).flatMap(v => extractTransferables(v, seen));
-};
-
+${EXTRACT_TRANSFERABLES_SRC}
 const workerFn = ${func};
 let cachedDataset = null;
 
@@ -204,11 +253,16 @@ self.addEventListener('message', async (event) => {
   }
 });
 `;
-
 export enum WorkerMode {
   Default = 'default',
   Pipeline = 'pipeline',
   Persistent = 'persistent',
+  /**
+   * Memory mode: the worker stores its result directly into the MemoryWorker
+   * thread via a pre-allocated `MessagePort`. Only a `__memory_ref__` token
+   * is posted back to the main thread — large data never touches main thread heap.
+   */
+  Memory = 'memory',
 }
 
 export interface WorkerFactoryOptions {
@@ -222,6 +276,7 @@ const TEMPLATES = Object.freeze({
   [WorkerMode.Persistent]: persistentWorkerTemplate,
   [WorkerMode.Pipeline]: pipelineWorkerTemplate,
   [WorkerMode.Default]: workerTemplate,
+  [WorkerMode.Memory]: memoryWorkerTemplate,
 });
 
 /**

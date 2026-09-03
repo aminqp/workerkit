@@ -13,22 +13,20 @@ export function initFlakyCard(foreman: Foreman) {
     const begin = performance.now();
     setRunning('flaky', btn);
     try {
-      const genRes = await foreman.runWorker('generateFlakyTasks', {
+      const { data: tasks } = await foreman.runWorker('generateFlakyTasks', {
         srcData: { count: 8 },
       });
-      const { data: tasks } = await foreman.collectResults(genRes);
       setStatus(
         'flaky',
         'running',
         `running ${tasks.length} flaky tasks (retries: 3)…`,
       );
 
-      const taskRes = await foreman.runWorker('flakyTask', { srcData: tasks });
       const {
         data: succeeded,
         failed,
         errors,
-      } = await foreman.collectResults(taskRes);
+      } = await foreman.runWorker('flakyTask', { srcData: tasks });
 
       const lines = [
         `${(succeeded as FlakyTaskResult[]).length} / ${(succeeded as FlakyTaskResult[]).length + failed} tasks succeeded  (${failed} exhausted retries)`,

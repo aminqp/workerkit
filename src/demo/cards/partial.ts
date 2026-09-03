@@ -11,19 +11,14 @@ export function initPartialCard(foreman: Foreman) {
     const btn = document.getElementById('btn-partial') as HTMLButtonElement;
     setRunning('partial', btn);
     try {
-      const genRes = await foreman.runWorker('generateSearchShards', {
+      const { data: shards } = await foreman.runWorker('generateSearchShards', {
         srcData: { shardCount: 8, query: 'web workers', failEvery: 3 },
       });
-      const { data: shards } = await foreman.collectResults(genRes);
       setStatus(
         'partial',
         'running',
         `querying ${shards.length} search shards…`,
       );
-
-      const shardRes = await foreman.runWorker('searchShard', {
-        srcData: shards,
-      });
 
       // merge + rank off the main thread via custom reducer
       setStatus('partial', 'running', 'ranking results…');
@@ -31,7 +26,8 @@ export function initPartialCard(foreman: Foreman) {
         data: allResults,
         succeeded,
         failed,
-      } = await foreman.collectResults(shardRes, {
+      } = await foreman.runWorker('searchShard', {
+        srcData: shards,
         reducer: (shards: SearchResult[][]) =>
           shards.flat().sort((a, b) => b.score - a.score),
       });
