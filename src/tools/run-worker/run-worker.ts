@@ -25,6 +25,10 @@ import { RunWorkerContext } from './types';
  * @param context - The execution context (provides orchestrator, logger, memory store, proxy).
  * @returns A CollectedResult containing the merged data and shard stats.
  * @throws {Error} If the worker factory is terminated or the worker is not found.
+ * @template TConfigs - A tuple of WorkerConfig configurations.
+ * @template TName - The name of the registered worker.
+ * @template T - The return type of the worker function.
+ * @template R - The merged return type after reducing shards.
  */
 export async function executeWorker<
   TConfigs extends readonly WorkerConfig[],

@@ -122,6 +122,7 @@ class MainWorkerFactory<
    * @param array - The array to partition.
    * @param numChunks - The desired number of chunks.
    * @returns An array of array chunks.
+   * @template T - The type of elements in the array.
    */
   partitionArray<T>(array: T[], numChunks: number): T[][] {
     return partitionArray(array, numChunks);
@@ -144,6 +145,9 @@ class MainWorkerFactory<
    * @param workerName - The name of the registered worker to execute.
    * @param rawParams - The payload, options, and reducer for the worker.
    * @returns A promise resolving to a CollectedResult with merged data and shard stats.
+   * @template TName - The name of the registered worker.
+   * @template T - The return type of the worker function.
+   * @template R - The merged return type after reducing shards.
    */
   async runWorker<
     TName extends keyof WorkerConfigMap<TConfigs> & string,
@@ -209,6 +213,8 @@ class MainWorkerFactory<
    * @param settled - The settled results from `runWorker` (when `autoCollect: false`).
    * @param options - Options containing the reducer function.
    * @returns A structured CollectedResult object.
+   * @template T - The type of the worker result data.
+   * @template R - The type of the merged result data.
    */
   async collectResults<
     T = unknown,
@@ -234,6 +240,7 @@ class MainWorkerFactory<
    * @param steps - An array of PipelineStep configurations.
    * @returns A CollectedResult containing the final pipeline output and shard stats,
    *          consistent with the shape returned by `runWorker()`.
+   * @template TResult - The type of the pipeline result.
    */
   async pipeline<TResult = unknown>(
     steps: PipelineStep[],
@@ -257,6 +264,7 @@ class MainWorkerFactory<
    * @param workerName - The name of the persistent worker to run.
    * @param params - The input data and configuration for the task.
    * @returns The result from the persistent worker thread.
+   * @template TResult - The expected type of the result from the worker thread.
    */
   async runPersistent<TResult = unknown>(
     workerName: string,

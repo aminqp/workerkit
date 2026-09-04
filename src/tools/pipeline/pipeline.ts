@@ -14,8 +14,9 @@ import { PipelineContext } from './types';
  *
  * @param steps - An array of pipeline steps, where each step defines the worker name and input parameters.
  * @param context - The execution context (provides orchestrator, logger, memory store).
- * @returns A promise that resolves to the final result of the pipeline, or rejects on error.
+ * @returns A promise that resolves to a CollectedResult containing the final output of the pipeline, or rejects on error.
  * @throws {Error} If the pipeline is empty, the worker manager is terminated, or a worker is not found.
+ * @template TResult - The type of the pipeline result.
  */
 export async function executePipeline<TResult = unknown>(
   steps: PipelineStep[],

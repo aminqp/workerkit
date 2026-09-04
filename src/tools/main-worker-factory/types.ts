@@ -184,6 +184,7 @@ export interface WorkerResult {
  *
  * @internal Not part of the public API. `runWorker` now returns `CollectedResult<R>` directly.
  * @deprecated Use the return value of `runWorker` directly.
+ * @template T - The worker's return type.
  */
 export class TypedSettledResults<T> {
   constructor(public readonly results: PromiseSettledResult<WorkerResult>[]) {}
@@ -191,7 +192,11 @@ export class TypedSettledResults<T> {
   declare readonly __type: T;
 }
 
-/** Options passed to `collectResults` (kept for the opt-out escape hatch). */
+/**
+ * Options passed to `collectResults` (kept for the opt-out escape hatch).
+ * @template T - The type of a single shard result.
+ * @template R - The type of the merged result.
+ */
 export interface CollectOptions<T, R = T[]> {
   /**
    * Custom reducer applied to the array of fulfilled shard values.
@@ -208,6 +213,8 @@ export interface CollectOptions<T, R = T[]> {
 /**
  * Options that can be passed alongside `srcData` in `runWorker` to control
  * auto-collection behaviour.
+ * @template T - The type of a single shard result.
+ * @template R - The type of the merged result.
  */
 export interface RunWorkerOptions<T = unknown, R = T[]> {
   /**
@@ -226,7 +233,10 @@ export interface RunWorkerOptions<T = unknown, R = T[]> {
   autoCollect?: boolean;
 }
 
-/** Result returned by collectResults */
+/**
+ * Result returned by collectResults
+ * @template R - The type of the merged data.
+ */
 export interface CollectedResult<R> {
   /** The merged output produced by the reducer */
   data: R;

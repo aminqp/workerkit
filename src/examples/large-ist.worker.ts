@@ -281,6 +281,7 @@ export function listTransformArray({
   /**
    * Transforms a date object with UTC time and timezone into formatted string
    * Format: (timezone) MonthName DayNumber Year, hour:minute AM/PM
+   * @param dateObj - The date object containing time and timezone.
    */
   function formatDateWithTimezone(dateObj: DateObj): string {
     if (!dateObj || !dateObj.dateTime || !dateObj.timezone) {

@@ -37,6 +37,9 @@ export function multiplyMatrices({ data }: { data: { size: number } }): {
 /**
  * Runs multiplyMatrices directly on the calling thread (main thread).
  * Returns total wall-clock time for running `count` multiplications sequentially.
+ *
+ * @param size - The size of the matrix.
+ * @param count - The number of multiplications to run.
  */
 export function runOnMainThread(
   size: number,

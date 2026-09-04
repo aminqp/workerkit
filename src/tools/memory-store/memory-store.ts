@@ -23,6 +23,7 @@ export class MemoryStore {
 
   /**
    * Checks if a reference ID is registered.
+   * @param refId - The reference ID to check.
    */
   has(refId: string): boolean {
     return this.store.has(refId);
@@ -31,6 +32,7 @@ export class MemoryStore {
   /**
    * Unregisters a reference ID.
    *
+   * @param refId - The reference ID to unregister.
    * @returns `true` if the key existed and was removed, `false` otherwise.
    */
   delete(refId: string): boolean {

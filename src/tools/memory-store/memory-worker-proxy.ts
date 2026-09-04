@@ -90,6 +90,7 @@ export class MemoryWorkerProxy {
 
   /**
    * Checks if a ref ID exists in the MemoryWorker.
+   * @param ref - The ref ID to check.
    */
   async has(ref: string): Promise<boolean> {
     const result = await this.send('GET', { ref });
@@ -100,6 +101,7 @@ export class MemoryWorkerProxy {
   /**
    * Deletes a ref from the MemoryWorker.
    *
+   * @param ref - The ref ID to delete.
    * @returns `true` if the ref existed and was deleted.
    */
   async delete(ref: string): Promise<boolean> {
