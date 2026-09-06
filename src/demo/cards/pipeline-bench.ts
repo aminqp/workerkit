@@ -1,7 +1,8 @@
-import { setStatus, setDone, setError, Foreman } from '../ui-helpers';
+import { setStatus, setDone, setError } from '../ui-helpers';
 import type { AggregateResult } from '../../examples/pipeline-benchmark.worker.ts';
+import { foreman } from '../demo.ts';
 
-export function initPipelineBenchCard(foreman: Foreman) {
+export function initPipelineBenchCard() {
   document.getElementById('btn-pipeline-bench')!.onclick = async () => {
     const btn = document.getElementById(
       'btn-pipeline-bench',

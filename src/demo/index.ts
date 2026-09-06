@@ -17,26 +17,28 @@ import { initBundlerCard } from './cards/bundler';
 import { initWorkerInstanceCard } from './cards/worker-instance';
 import { initNativePipelineCard } from './cards/native-pipeline';
 import { initMemoryCard } from './cards/memory';
-import type { Foreman } from './ui-helpers';
 
-export function initDemo(foreman: Foreman) {
-  initExpCard(foreman);
-  initGenCard(foreman);
-  initTransformCard(foreman);
-  initListCard(foreman);
-  initImageCard(foreman);
-  initLogsCard(foreman);
-  initDelayedCard(foreman);
-  initFlakyCard(foreman);
-  initPartialCard(foreman);
-  initBenchCard(foreman);
-  initFetchCard(foreman);
-  initPipelineCard(foreman);
-  initPipelineBenchCard(foreman);
-  initPersistentCard(foreman);
-  initPersistentBenchCard(foreman);
-  initBundlerCard(foreman);
-  initWorkerInstanceCard(foreman);
-  initNativePipelineCard(foreman);
-  initMemoryCard(foreman);
+export function initDemo() {
+  initExpCard();
+  initGenCard();
+  initTransformCard();
+  initListCard();
+  initImageCard();
+  initLogsCard();
+  initDelayedCard();
+  initFlakyCard();
+  initPartialCard();
+  initBenchCard();
+  initFetchCard();
+  initPipelineCard();
+  initPipelineBenchCard();
+  initPersistentCard();
+  initPersistentBenchCard();
+  initBundlerCard();
+  initWorkerInstanceCard();
+  initNativePipelineCard();
+  initMemoryCard();
 }
+
+// Initialize card listeners
+initDemo();

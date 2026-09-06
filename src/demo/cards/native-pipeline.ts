@@ -1,13 +1,8 @@
-import {
-  setRunning,
-  setStatus,
-  setDone,
-  setError,
-  Foreman,
-} from '../ui-helpers';
+import { setRunning, setStatus, setDone, setError } from '../ui-helpers';
 import type { NativePipelineSummary } from '../../examples/native-step3.worker.ts';
+import { foreman } from '../demo.ts';
 
-export function initNativePipelineCard(foreman: Foreman) {
+export function initNativePipelineCard() {
   const btn = document.getElementById(
     'btn-native-pipeline',
   ) as HTMLButtonElement | null;

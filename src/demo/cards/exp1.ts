@@ -1,7 +1,8 @@
 import { setRunning, setDone, setError, preview } from '../ui-helpers';
-import type { Foreman } from '../ui-helpers';
 
-export function initExpCard(foreman: Foreman) {
+import { foreman } from '../demo';
+
+export function initExpCard() {
   document.getElementById('btn-exp1')!.onclick = async () => {
     const btn = document.getElementById('btn-exp1') as HTMLButtonElement;
     const begin = performance.now();

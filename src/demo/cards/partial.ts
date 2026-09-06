@@ -1,12 +1,12 @@
 import { setRunning, setStatus, setError, setResult } from '../ui-helpers';
-import type { Foreman } from '../ui-helpers';
 
 interface SearchResult {
   score: number;
   title: string;
 }
+import { foreman } from '../demo';
 
-export function initPartialCard(foreman: Foreman) {
+export function initPartialCard() {
   document.getElementById('btn-partial')!.onclick = async () => {
     const btn = document.getElementById('btn-partial') as HTMLButtonElement;
     setRunning('partial', btn);

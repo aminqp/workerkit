@@ -44,6 +44,8 @@ describe('executePipeline', () => {
       }),
       trackWorker: trackWorkerSpy,
       terminateWorker: terminateWorkerSpy,
+      // @ts-expect-error mocked
+      memoryWorkerProxy: {},
       logger: {
         verbose: vi.fn(),
         info: vi.fn(),

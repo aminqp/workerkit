@@ -1,12 +1,8 @@
-import {
-  setRunning,
-  setStatus,
-  setDone,
-  setError,
-  Foreman,
-} from '../ui-helpers';
+import { setRunning, setStatus, setDone, setError } from '../ui-helpers';
 
-export function initMemoryCard(foreman: Foreman) {
+import { foreman } from '../demo';
+
+export function initMemoryCard() {
   const btnRun = document.getElementById('btn-memory') as HTMLButtonElement;
   const btnStats = document.getElementById(
     'btn-memory-stats',

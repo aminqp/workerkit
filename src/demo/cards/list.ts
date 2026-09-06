@@ -4,10 +4,10 @@ import {
   setDone,
   setError,
   preview,
-  Foreman,
 } from '../ui-helpers';
+import { foreman } from '../demo';
 
-export function initListCard(foreman: Foreman) {
+export function initListCard() {
   document.getElementById('btn-list')!.onclick = async () => {
     const btn = document.getElementById('btn-list') as HTMLButtonElement;
     const begin = performance.now();

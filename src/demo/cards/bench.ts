@@ -1,10 +1,11 @@
-import { setStatus, setDone, Foreman } from '../ui-helpers';
+import { setStatus, setDone } from '../ui-helpers';
 import { runOnMainThread } from '../../examples/benchmark.worker.ts';
 
 const BENCH_SIZE = 350;
 const BENCH_COUNT = 6;
+import { foreman } from '../demo.ts';
 
-export function initBenchCard(foreman: Foreman) {
+export function initBenchCard() {
   document.getElementById('btn-bench')!.onclick = async () => {
     const btn = document.getElementById('btn-bench') as HTMLButtonElement;
     const mainEl = document.getElementById('bench-main-time')!;

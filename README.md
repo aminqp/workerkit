@@ -1,6 +1,6 @@
 # workerkit
 
-A lightweight TypeScript library for running functions in Web Workers with support for partitioning, retries, and concurrency control — all without the boilerplate.
+A lightweight TypeScript library for running functions in Web Workers with support for partitioning, retries, and concurrency control all without the boilerplate.
 
 Instead of manually creating worker scripts and wiring up `postMessage` / `onmessage`, you write plain exported functions and hand them to `MainWorkerFactory`. The library serializes them into Blob workers, manages threads per function, handles retries on failure, and merges results back on the main thread.
 
@@ -32,23 +32,29 @@ export function sum({ data }: { data: number[] }): number {
 ### 2. Register and run it
 
 ```ts
-import { MainWorkerFactory } from '@offmain/workerkit';
+import {
+  MainWorkerFactory,
+  defineWorkerConfig,
+  defineWorkerConfigs,
+} from '@offmain/workerkit';
 import { sum } from './sum.worker.ts';
 
 const factory = new MainWorkerFactory({
-  workers: [
-    {
+  workers: defineWorkerConfigs(
+    defineWorkerConfig({
       name: 'sum',
       role: 'computation',
       func: sum,
       maxConcurrency: 4,
       retries: 2,
-    },
-  ],
+    }),
+  ),
 });
 
-const settled = await factory.runWorker('sum', { srcData: [1, 2, 3, 4, 5] });
-const { data } = await factory.collectResults(settled);
+// Fully type-safe: 'sum' autocompletes, srcData is type-checked, and data is typed as number[]!
+const { data, succeeded } = await factory.runWorker('sum', {
+  srcData: [1, 2, 3, 4, 5],
+});
 
 console.log(data); // [15]
 ```
@@ -66,6 +72,147 @@ console.log(data); // [15]
 | `maxConcurrency` | `number`       | `navigator.`<br>`hardwareConcurrency` | Max parallel worker instances — defaults to the number of logical CPU cores reported by the browser |
 | `retries`        | `number`       | `0`                                   | How many times to retry a failed shard before marking it as rejected                                |
 | `partition`      | `boolean`      | `false`                               | Split array input across multiple workers automatically                                             |
+
+---
+
+## 🎯 Type-Friendly Configuration & Strict Inference
+
+`workerkit` provides first-class, end-to-end TypeScript safety. You get full autocompletion for registered worker names, compile-time validation of input payloads (`srcData`), and strongly typed return data without manual type assertions.
+
+### `defineWorkerConfig` & `defineWorkerConfigs`
+
+Use `defineWorkerConfigs(...)` and `defineWorkerConfig(...)` to declare your worker suite. This eliminates the need for manual `as const` casts while preserving literal worker names:
+
+```ts
+import {
+  MainWorkerFactory,
+  defineWorkerConfig,
+  defineWorkerConfigs,
+} from '@offmain/workerkit';
+import { sum } from './sum.worker.ts';
+import type { DataPayload, TransformedItem } from './transform.worker.ts';
+
+const workerConfigs = defineWorkerConfigs(
+  // 1. Inlined function — input and output types are inferred automatically from `func`
+  defineWorkerConfig({
+    name: 'sum',
+    role: 'computation',
+    func: sum,
+    maxConcurrency: 4,
+  }),
+
+  // 2. Bundled worker (createWorker) — explicit types via currying
+  defineWorkerConfig<(p: { data: DataPayload }) => TransformedItem[]>()({
+    name: 'transform',
+    role: 'transform',
+    createWorker: () =>
+      new Worker(new URL('./transform.worker.ts', import.meta.url), {
+        type: 'module',
+      }),
+    maxConcurrency: 2,
+  }),
+);
+
+const factory = new MainWorkerFactory({ workers: workerConfigs });
+
+// ✅ 'sum' and 'transform' autocomplete in your IDE
+// ✅ srcData is type-checked against DataPayload
+// ✅ data is typed as TransformedItem[] (NOT unknown!)
+const { data } = await factory.runWorker('transform', {
+  srcData: { items: [], locale: 'en' },
+});
+```
+
+### 🔄 Migrating from v0.14.1 to v1.0.0 (Breaking Changes)
+
+The upcoming **v1.0.0** release transforms `workerkit` into a modern, type-friendly library and streamlines the worker execution model. If you are upgrading from **v0.14.1** (published on npm), review the concrete breaking changes and migration steps below:
+
+| Feature                        | In `v0.14.1`                                                                                                                                           | In `v1.0.0`                                                                                                                                       | Migration Action                                                                                                                                  |
+| :----------------------------- | :----------------------------------------------------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------ | :------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Worker Registration**        | Pure raw object literals with mandatory `as const`: `[{ name: 'calc', func, ... }] as const`. Workers using `createWorker` had **no way to be typed**. | Replaced by `defineWorkerConfigs(...)` and `defineWorkerConfig(...)`. `createWorker` can now be strongly typed via currying.                      | Wrap configs with `defineWorkerConfigs(defineWorkerConfig({...}))`. Remove `as const`.                                                            |
+| **`runWorker()` Execution**    | **Two-step execution**: returned `TypedSettledResults` requiring an explicit `const { data } = await factory.collectResults(settled)`.                 | **Single-step execution**: auto-collects by default, directly returning `Promise<CollectedResult<R>>` with `{ data, succeeded, failed, errors }`. | Remove `collectResults(...)`. Destructure `{ data }` directly from `runWorker()`. Pass `autoCollect: false` only if you need raw settled results. |
+| **`createWorker` Type Safety** | Untyped: lacked any type hint mechanism. Payloads and return values for bundled workers were always `unknown`.                                         | **Curried Type Hint**: `defineWorkerConfig<WorkerFunctionType>()({ name: '...', createWorker: ... })` provides 100% type safety.                  | Use curried `defineWorkerConfig<T>()({...})` to define input and output types for bundled workers without runtime overhead.                       |
+| **`pipeline()` Return Value**  | Returned the unwrapped raw final value: `Promise<TResult>`.                                                                                            | Returns `Promise<CollectedResult<TResult>>` unified with `runWorker()`, including execution statistics (`succeeded`, `failed`, `errors`).         | Access the final pipeline output via `result.data` instead of directly awaiting `result`.                                                         |
+| **`runPersistent()` Typing**   | `workerName` accepted any `string`, and the return type defaulted to untyped `unknown`.                                                                | Strictly typed: `workerName` autocompletes from registered configs, and return value is inferred from that worker's return type.                  | No casting needed — results are automatically type-safe.                                                                                          |
+
+#### Concrete Code Comparison (v0.14.1 vs v1.0.0)
+
+```ts
+// ============================================================================
+// ❌ v0.14.1 (Pure configs + as const + 2-step execution + untyped createWorker)
+// ============================================================================
+import { MainWorkerFactory } from '@offmain/workerkit';
+import { calcWorker } from './calc.worker';
+
+const factory = new MainWorkerFactory({
+  workers: [
+    {
+      name: 'calc',
+      role: 'computation',
+      func: calcWorker,
+    },
+    {
+      name: 'bundled',
+      role: 'computation',
+      // In v0.14.1, createWorker had NO way to define parameter or return types:
+      createWorker: () =>
+        new Worker(new URL('./bundled.worker.ts', import.meta.url), {
+          type: 'module',
+        }),
+    },
+  ] as const, // Required 'as const' to preserve name literals
+});
+
+// Required two separate steps to get data:
+const settled = await factory.runWorker('calc', { srcData: [1, 2, 3] });
+const { data } = await factory.collectResults(settled);
+
+// pipeline() returned raw unwrapped value:
+const pipelineResult = await factory.pipeline([
+  { worker: 'calc', srcData: [1, 2, 3] },
+]);
+
+// ============================================================================
+// ✅ v1.0.0 (Type-friendly helpers + 1-step execution + fully-typed createWorker)
+// ============================================================================
+import {
+  MainWorkerFactory,
+  defineWorkerConfig,
+  defineWorkerConfigs,
+} from '@offmain/workerkit';
+import { calcWorker } from './calc.worker';
+import type { BundledPayload, BundledResult } from './bundled.worker';
+
+const factory = new MainWorkerFactory({
+  workers: defineWorkerConfigs(
+    // Inferred automatically from `func`:
+    defineWorkerConfig({
+      name: 'calc',
+      role: 'computation',
+      func: calcWorker,
+    }),
+    // Explicitly typed via curried signature (no 'unknown' returns!):
+    defineWorkerConfig<(p: { data: BundledPayload }) => BundledResult>()({
+      name: 'bundled',
+      role: 'computation',
+      createWorker: () =>
+        new Worker(new URL('./bundled.worker.ts', import.meta.url), {
+          type: 'module',
+        }),
+    }),
+  ), // No 'as const' needed!
+});
+
+// 1-step execution: autocompletes 'calc', validates srcData, and data is typed!
+const { data, succeeded } = await factory.runWorker('calc', {
+  srcData: [1, 2, 3],
+});
+
+// pipeline() returns CollectedResult with stats:
+const { data: pipelineData } = await factory.pipeline([
+  { worker: 'calc', srcData: [1, 2, 3] },
+]);
+```
 
 ---
 
@@ -108,11 +255,17 @@ export default defineWorker(
 Webpack 5 and Vite look for literal `new Worker(new URL(..., import.meta.url))` calls inside consumer source files. By providing a `createWorker` factory function, bundlers statically detect and bundle the worker into a separate JS file, while allowing `MainWorkerFactory` to scale `maxConcurrency` across multiple threads:
 
 ```ts
-import { MainWorkerFactory } from '@offmain/workerkit';
+import {
+  MainWorkerFactory,
+  defineWorkerConfig,
+  defineWorkerConfigs,
+} from '@offmain/workerkit';
 
 const factory = new MainWorkerFactory({
-  workers: [
-    {
+  workers: defineWorkerConfigs(
+    defineWorkerConfig<
+      (p: { data: { locale: string; items: { timestamp: number }[] } }) => any
+    >()({
       name: 'transformData',
       role: 'compute',
       // Webpack 5 and Vite statically analyze new Worker(new URL(..., import.meta.url))
@@ -122,11 +275,11 @@ const factory = new MainWorkerFactory({
           type: 'module',
         }),
       maxConcurrency: 4, // Spawns up to 4 parallel worker instances
-    },
-  ] as const,
+    }),
+  ),
 });
 
-const settled = await factory.runWorker('transformData', {
+const { data } = await factory.runWorker('transformData', {
   srcData: { locale: 'es', items: [{ timestamp: Date.now() }] },
 });
 ```
@@ -138,20 +291,22 @@ const settled = await factory.runWorker('transformData', {
 When `partition: true`, an array passed as `srcData` is automatically split across worker instances and results are merged back.
 
 ```ts
-const settled = await factory.runWorker('sum', {
+// Results are automatically merged and returned by default!
+const { data, succeeded, failed } = await factory.runWorker('sum', {
   srcData: largeArray, // split across workers
 });
-
-const { data, succeeded, failed } = await factory.collectResults(settled);
 ```
 
-You can also provide a custom reducer to control how shard results are merged:
+You can also provide a custom reducer directly to `runWorker` to control how shard results are merged:
 
 ```ts
-const { data } = await factory.collectResults(settled, {
+const { data } = await factory.runWorker('sum', {
+  srcData: largeArray,
   reducer: (shards) => shards.flat().sort((a, b) => b.score - a.score),
 });
 ```
+
+_(Optional escape hatch: pass `autoCollect: false` to `runWorker` to receive raw settled results and manually call `factory.collectResults(settled, options)`)._
 
 > **Note:** The reducer runs inside a worker thread and must be self-contained — it cannot reference variables from the outer scope.
 
@@ -189,17 +344,22 @@ Only the final result crosses back to the main thread. If your pipeline generate
 
 ### Usage
 
-````ts
-import { MainWorkerFactory } from '@offmain/workerkit';
+```ts
+import {
+  MainWorkerFactory,
+  defineWorkerConfig,
+  defineWorkerConfigs,
+} from '@offmain/workerkit';
 import { fetchData, transform, aggregate } from './workers.ts';
 
 const factory = new MainWorkerFactory({
-  workers: [
-    { name: 'fetchData', role: 'io', func: fetchData },
-    { name: 'transform', role: 'compute', func: transform },
-    { name: 'aggregate', role: 'compute', func: aggregate },
-  ] as const,
+  workers: defineWorkerConfigs(
+    defineWorkerConfig({ name: 'fetchData', role: 'io', func: fetchData }),
+    defineWorkerConfig({ name: 'transform', role: 'compute', func: transform }),
+    defineWorkerConfig({ name: 'aggregate', role: 'compute', func: aggregate }),
+  ),
 });
+```
 
 ### Step-Specific Options and Configs in Pipeline
 
@@ -221,7 +381,7 @@ const result = await factory.pipeline<AggregateResult>([
     options: { threshold: 10 },
   },
 ]);
-````
+```
 
 ### How each step receives data and parameters
 
@@ -270,13 +430,21 @@ Only the first call transfers the dataset. Subsequent calls send just the config
 ### Usage
 
 ```ts
-import { MainWorkerFactory } from '@offmain/workerkit';
+import {
+  MainWorkerFactory,
+  defineWorkerConfig,
+  defineWorkerConfigs,
+} from '@offmain/workerkit';
 import { transformArray } from './transform.worker.ts';
 
 const factory = new MainWorkerFactory({
-  workers: [
-    { name: 'transform', role: 'computation', func: transformArray },
-  ] as const,
+  workers: defineWorkerConfigs(
+    defineWorkerConfig({
+      name: 'transform',
+      role: 'computation',
+      func: transformArray,
+    }),
+  ),
 });
 
 // First call: send dataset + config (dataset gets cached in worker memory)

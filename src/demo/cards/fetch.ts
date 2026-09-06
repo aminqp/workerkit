@@ -1,7 +1,8 @@
-import { setRunning, setDone, setError, Foreman } from '../ui-helpers';
+import { setRunning, setDone, setError } from '../ui-helpers';
 import type { EnrichedPost } from '../../examples/fetch-posts.worker.ts';
+import { foreman } from '../demo.ts';
 
-export function initFetchCard(foreman: Foreman) {
+export function initFetchCard() {
   document.getElementById('btn-fetch')!.onclick = async () => {
     const btn = document.getElementById('btn-fetch') as HTMLButtonElement;
     const begin = performance.now();

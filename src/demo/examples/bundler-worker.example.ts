@@ -39,7 +39,7 @@ export async function runBundlerWorkerExample() {
     },
   });
 
-  const { data } = await factory.collectResults(settled);
+  const { data } = settled;
 
   // Option 2: Using low-level WorkerFactory directly with createWorker
   const directFactory = new WorkerFactory(undefined, {

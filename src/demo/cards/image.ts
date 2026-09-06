@@ -1,13 +1,13 @@
 import { setRunning, setStatus, setDone, setError } from '../ui-helpers';
-import type { Foreman } from '../ui-helpers';
 
 interface ImageData {
   data: number[];
   width: number;
   height: number;
 }
+import { foreman } from '../demo';
 
-export function initImageCard(foreman: Foreman) {
+export function initImageCard() {
   document.getElementById('btn-image')!.onclick = async () => {
     const btn = document.getElementById('btn-image') as HTMLButtonElement;
     const begin = performance.now();

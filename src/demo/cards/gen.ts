@@ -1,7 +1,8 @@
 import { setRunning, setDone, setError, preview } from '../ui-helpers';
-import type { Foreman } from '../ui-helpers';
 
-export function initGenCard(foreman: Foreman) {
+import { foreman } from '../demo';
+
+export function initGenCard() {
   document.getElementById('btn-gen')!.onclick = async () => {
     const btn = document.getElementById('btn-gen') as HTMLButtonElement;
     const begin = performance.now();

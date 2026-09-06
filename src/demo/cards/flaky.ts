@@ -1,13 +1,8 @@
-import {
-  setRunning,
-  setStatus,
-  setDone,
-  setError,
-  Foreman,
-} from '../ui-helpers';
+import { setRunning, setStatus, setDone, setError } from '../ui-helpers';
 import type { FlakyTaskResult } from '../../examples/flaky-task.worker.ts';
+import { foreman } from '../demo.ts';
 
-export function initFlakyCard(foreman: Foreman) {
+export function initFlakyCard() {
   document.getElementById('btn-flaky')!.onclick = async () => {
     const btn = document.getElementById('btn-flaky') as HTMLButtonElement;
     const begin = performance.now();

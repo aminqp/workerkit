@@ -1,6 +1,7 @@
-import { setRunning, setDone, setError, Foreman } from '../ui-helpers';
+import { setRunning, setDone, setError } from '../ui-helpers';
+import { foreman } from '../demo';
 
-export function initWorkerInstanceCard(foreman: Foreman) {
+export function initWorkerInstanceCard() {
   const btn = document.getElementById(
     'btn-worker-instance',
   ) as HTMLButtonElement | null;

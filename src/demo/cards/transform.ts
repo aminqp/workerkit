@@ -4,10 +4,10 @@ import {
   setDone,
   setError,
   preview,
-  Foreman,
 } from '../ui-helpers';
+import { foreman } from '../demo';
 
-export function initTransformCard(foreman: Foreman) {
+export function initTransformCard() {
   document.getElementById('btn-transform')!.onclick = async () => {
     const btn = document.getElementById('btn-transform') as HTMLButtonElement;
     const begin = performance.now();

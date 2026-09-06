@@ -1,13 +1,8 @@
-import {
-  setRunning,
-  setStatus,
-  setDone,
-  setError,
-  Foreman,
-} from '../ui-helpers';
+import { setRunning, setStatus, setDone, setError } from '../ui-helpers';
 import type { FilteredPost } from '../../examples/pipeline-demo.worker.ts';
+import { foreman } from '../demo.ts';
 
-export function initPipelineCard(foreman: Foreman) {
+export function initPipelineCard() {
   document.getElementById('btn-pipeline')!.onclick = async () => {
     const btn = document.getElementById('btn-pipeline') as HTMLButtonElement;
     const begin = performance.now();

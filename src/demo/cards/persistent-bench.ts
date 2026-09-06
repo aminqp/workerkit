@@ -1,7 +1,7 @@
 import { setStatus, setDone, setError } from '../ui-helpers';
-import type { Foreman } from '../ui-helpers';
+import { foreman } from '../demo';
 
-export function initPersistentBenchCard(foreman: Foreman) {
+export function initPersistentBenchCard() {
   document.getElementById('btn-persistent-bench')!.onclick = async () => {
     const btn = document.getElementById(
       'btn-persistent-bench',

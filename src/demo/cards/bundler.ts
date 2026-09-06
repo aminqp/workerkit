@@ -1,7 +1,8 @@
-import { setRunning, setDone, setError, Foreman } from '../ui-helpers';
-import type { TransformedItem } from '../../examples/bundler-luxon-i18n.worker.ts';
+import { setRunning, setDone, setError } from '../ui-helpers';
 
-export function initBundlerCard(foreman: Foreman) {
+import { foreman } from '../demo.ts';
+
+export function initBundlerCard() {
   const btn = document.getElementById(
     'btn-bundler',
   ) as HTMLButtonElement | null;
@@ -21,11 +22,11 @@ export function initBundlerCard(foreman: Foreman) {
           ],
         },
       });
-      const items = data as TransformedItem[];
+
       const lines = [
-        `${items.length} items transformed in worker with Luxon & i18next:`,
+        `${data.length} items transformed in worker with Luxon & i18next:`,
         '',
-        ...items.map(
+        ...data.map(
           (it) =>
             `[${it.id}] ${it.translatedCategory} (${it.translatedStatus})\n     Luxon Date: ${it.formattedDate} (${it.daysAgo} days ago) | Val: $${it.transformedValue}`,
         ),

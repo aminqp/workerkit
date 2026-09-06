@@ -1,13 +1,8 @@
-import {
-  setRunning,
-  setStatus,
-  setDone,
-  setError,
-  Foreman,
-} from '../ui-helpers';
+import { setRunning, setStatus, setDone, setError } from '../ui-helpers';
 import type { LogReport } from '../../examples/log-analyzer.worker.ts';
+import { foreman } from '../demo.ts';
 
-export function initLogsCard(foreman: Foreman) {
+export function initLogsCard() {
   document.getElementById('btn-logs')!.onclick = async () => {
     const btn = document.getElementById('btn-logs') as HTMLButtonElement;
     const begin = performance.now();

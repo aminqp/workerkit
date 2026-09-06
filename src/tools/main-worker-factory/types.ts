@@ -16,7 +16,8 @@ export type WorkerRole = string;
  * @typeParam TParams - The type of the message payload sent to the worker.
  * @typeParam TResult - The type of the value the worker posts back.
  */
-export type WorkerFunction<TParams = unknown, TResult = unknown> = (
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type WorkerFunction<TParams = any, TResult = any> = (
   params: TParams,
 ) => TResult;
 
@@ -25,6 +26,7 @@ export type WorkerFunction<TParams = unknown, TResult = unknown> = (
  *
  * @typeParam TFunc - The concrete {@link WorkerFunction} type for this worker.
  */
+
 export interface WorkerConfig<TFunc extends WorkerFunction = WorkerFunction> {
   /** Unique name used to look up this worker via `runWorker`. */
   name: WorkerName;
@@ -38,6 +40,11 @@ export interface WorkerConfig<TFunc extends WorkerFunction = WorkerFunction> {
    * while allowing `MainWorkerFactory` to scale concurrency and manage worker thread lifecycles.
    */
   createWorker?: () => Worker;
+  /**
+   * Optional compile-time type hint for workers that only use `createWorker`.
+   * Will not exist or be used at runtime.
+   */
+  _typeHint?: TFunc;
   /**
    * Maximum number of parallel threads to spawn for this worker.
    * Defaults to `navigator.hardwareConcurrency` when omitted.
@@ -88,14 +95,17 @@ export interface MemoryStats {
  *
  * @typeParam T - The readonly tuple of `WorkerConfig` values.
  */
-export type WorkerConfigMap<
-  T extends readonly WorkerConfig<WorkerFunction<unknown, unknown>>[],
-> = {
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type WorkerConfigMap<T extends readonly WorkerConfig<any>[]> = {
   [K in T[number]['name']]: NonNullable<
-    Extract<T[number], { name: K }>['func']
+    Extract<T[number], { name: K }>['_typeHint']
   > extends WorkerFunction
-    ? NonNullable<Extract<T[number], { name: K }>['func']>
-    : WorkerFunction;
+    ? NonNullable<Extract<T[number], { name: K }>['_typeHint']>
+    : NonNullable<
+          Extract<T[number], { name: K }>['func']
+        > extends WorkerFunction
+      ? NonNullable<Extract<T[number], { name: K }>['func']>
+      : WorkerFunction;
 };
 
 /**

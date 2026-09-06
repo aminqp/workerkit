@@ -3,7 +3,7 @@
  * @param count Number of data items to generate
  * @returns Array of random data elements
  */
-export function generateRandomData({ count = 100 }): unknown[] {
+export function generateRandomData({ count = 100 }) {
   /**
    * Generates a random number
    */

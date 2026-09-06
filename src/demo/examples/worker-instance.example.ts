@@ -33,7 +33,7 @@ export async function runWorkerInstanceExample() {
   const settled = await factory.runWorker('webpackBundledWorker', {
     srcData: 21,
   });
-  const { data } = await factory.collectResults(settled);
+  const { data } = settled;
 
   // Low-level WorkerFactory directly with createWorker option
   const directFactory = new WorkerFactory(undefined, {

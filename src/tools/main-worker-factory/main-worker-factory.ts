@@ -1,11 +1,9 @@
 import {
   CollectOptions,
   CollectedResult,
-  PipelineStep,
   WorkerConfig,
   WorkerConfigMap,
   WorkerDataParam,
-  WorkerFunction,
   WorkerReturnType,
   TypedSettledResults,
   MemoryStats,
@@ -17,14 +15,11 @@ import { Logger, LogLevel } from '../logger';
 import { executeWorker } from '../run-worker';
 
 // Import extracted modules
-import { extractTransferable } from '../extract-transferable';
 import { partitionArray } from '../partition-array';
 import { executePipeline } from '../pipeline';
 import { collectWorkerResults } from '../collect-results';
 import { PersistentWorkerManager } from '../persistent-manager';
 import { WorkerOrchestrator } from '../orchestrator';
-
-export { extractTransferable };
 
 /**
  * Main orchestration class for Web Worker management.
@@ -39,7 +34,8 @@ export { extractTransferable };
  * @typeParam TConfigs - A tuple of WorkerConfig configurations.
  */
 class MainWorkerFactory<
-  TConfigs extends readonly WorkerConfig<WorkerFunction<unknown, unknown>>[],
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  TConfigs extends readonly WorkerConfig<any>[],
 > {
   private readonly _workers: WorkerConfig[];
   private readonly _threads: number;
@@ -243,7 +239,11 @@ class MainWorkerFactory<
    * @template TResult - The type of the pipeline result.
    */
   async pipeline<TResult = unknown>(
-    steps: PipelineStep[],
+    steps: {
+      worker: keyof WorkerConfigMap<TConfigs> & string;
+      srcData?: unknown;
+      [key: string]: unknown;
+    }[],
   ): Promise<CollectedResult<TResult>> {
     return executePipeline(steps, {
       memoryStore: this._memoryStore,
@@ -266,8 +266,11 @@ class MainWorkerFactory<
    * @returns The result from the persistent worker thread.
    * @template TResult - The expected type of the result from the worker thread.
    */
-  async runPersistent<TResult = unknown>(
-    workerName: string,
+  async runPersistent<
+    TName extends keyof WorkerConfigMap<TConfigs> & string,
+    TResult = WorkerReturnType<WorkerConfigMap<TConfigs>[TName]>,
+  >(
+    workerName: TName,
     params: { dataset?: unknown; config: unknown },
   ): Promise<TResult> {
     return this._persistentManager.runPersistent(workerName, params);

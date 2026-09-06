@@ -4,11 +4,11 @@ import {
   setDone,
   setError,
   setResult,
-  Foreman,
 } from '../ui-helpers';
 import type { TransformResult } from '../../examples/persistent-transform.worker.ts';
+import { foreman } from '../demo.ts';
 
-export function initPersistentCard(foreman: Foreman) {
+export function initPersistentCard() {
   let rerunCount = 0;
 
   document.getElementById('btn-persistent')!.onclick = async () => {

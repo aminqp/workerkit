@@ -1,12 +1,3 @@
-import type MainWorkerFactory from '../tools/main-worker-factory/main-worker-factory';
-import type {
-  WorkerConfig,
-  WorkerFunction,
-} from '../tools/main-worker-factory/types';
-
-type AnyConfigs = readonly WorkerConfig<WorkerFunction<unknown, unknown>>[];
-export type Foreman = InstanceType<typeof MainWorkerFactory<AnyConfigs>>;
-
 export type CardId =
   | 'exp1'
   | 'gen'

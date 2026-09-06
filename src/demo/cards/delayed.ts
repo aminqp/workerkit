@@ -1,13 +1,8 @@
-import {
-  setRunning,
-  setStatus,
-  setDone,
-  setError,
-  Foreman,
-} from '../ui-helpers';
+import { setRunning, setStatus, setDone, setError } from '../ui-helpers';
 import type { DelayedTaskResult } from '../../examples/delayed-task.worker.ts';
+import { foreman } from '../demo.ts';
 
-export function initDelayedCard(foreman: Foreman) {
+export function initDelayedCard() {
   document.getElementById('btn-delayed')!.onclick = async () => {
     const btn = document.getElementById('btn-delayed') as HTMLButtonElement;
     const begin = performance.now();
