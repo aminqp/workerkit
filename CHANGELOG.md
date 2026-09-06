@@ -1,5 +1,20 @@
 # Changelog
 
+# [1.0.0](https://github.com/aminqp/workerkit/compare/v0.14.1...v1.0.0) (2026-09-06)
+
+- BREAKING CHANGE feat(types): introduce defineWorkerConfig helpers, curried type inference, and reorganize demo suite ([39ecb97](https://github.com/aminqp/workerkit/commit/39ecb978ca8f93cd7d95e6dffe03b8ef2a85129d))
+
+### Bug Fixes
+
+- **pipeline:** correct promise return type for executePipeline ([ce25e28](https://github.com/aminqp/workerkit/commit/ce25e2826a9f9777f5b91f893dd5c8180394a4e2))
+
+### BREAKING CHANGES
+
+- - For workers using `createWorker` that require custom TypeScript signatures, `defineWorkerConfig` now uses a curried invocation: `defineWorkerConfig<MyWorkerType>()({ name: '...', createWorker: ... })`.
+
+* `runWorker()` now auto-collects and merges shard results by default, returning `Promise<CollectedResult<R>>` directly (use `autoCollect: false` for raw settled results).
+* `pipeline()` returns `Promise<CollectedResult<TResult>>` containing execution metadata (`succeeded`, `failed`, `errors`), with final data accessed via `result.data`.
+
 ## [0.14.1](https://github.com/aminqp/workerkit/compare/v0.14.0...v0.14.1) (2026-08-31)
 
 ### Bug Fixes
