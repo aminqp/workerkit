@@ -36,6 +36,8 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test --project=\"*:harness*\" && playwright test --project=\"*:demo*\"",
     "test:e2e:full": "E2E_DIST=1 E2E_BROWSERS=chromium,firefox,webkit pnpm run test:e2e",
+    "test:e2e:example": "pnpm run build:lib && pnpm --filter workerkit-example-react-mui test:e2e",
+    "example:react": "node scripts/dev-example.mjs",
     "typecheck": "tsc --noEmit -p . && tsc --noEmit -p e2e",
     "release": "release-it --ci",
     "release:patch": "release-it --increment patch --ci",
