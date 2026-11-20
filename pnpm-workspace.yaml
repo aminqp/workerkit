@@ -3,3 +3,22 @@ packages:
 
 allowBuilds:
   esbuild: true
+
+# Supply-chain protection for every install in this repository.
+# Skip package versions published less than 7 days ago (in minutes): most
+# malicious releases are caught and pulled within days.
+minimumReleaseAge: 10080
+# Reject a version published with weaker verification (e.g. without the
+# provenance or trusted publishing its earlier versions had).
+trustPolicy: no-downgrade
+# Reviewed 2026-11-20: development tools only (not shipped), each released 6+
+# months ago and already in the 1.0.0 lockfile; their publishing method changed
+# rather than their owner. A newly flagged version still fails until reviewed.
+trustPolicyExclude:
+  - chokidar@4.0.3 # Dec 2024, via c12/release-it
+  - tinyexec@1.2.2 # May 2026, via lint-staged
+  - undici@6.21.2 # Mar 2025, via release-it
+  - vite@5.4.21 # Oct 2025, Vitest 1's own Vite
+# Install dependencies of dependencies from the registry only, never from git
+# URLs or tarballs.
+blockExoticSubdeps: true
