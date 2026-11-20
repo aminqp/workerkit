@@ -17,6 +17,7 @@
   },
   "hooks": {
     "before:init": ["pnpm run lint", "pnpm run test"],
-    "after:bump": "pnpm run build:lib"
+    "after:bump": "pnpm run build:lib",
+    "before:git:release": "node scripts/clean-changelog.mjs && git add CHANGELOG.md"
   }
 }
