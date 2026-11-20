@@ -23,7 +23,8 @@
   },
   "files": [
     "dist",
-    "eslint-rules"
+    "eslint-rules",
+    "!eslint-rules/**/*.test.ts"
   ],
   "scripts": {
     "dev": "vite",
