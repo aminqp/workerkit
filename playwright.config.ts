@@ -7,8 +7,9 @@ import { defineConfig, devices, type Project } from '@playwright/test';
  *   E2E_DIST=1 pnpm test:e2e            → also run the harness against dist/
  *   E2E_BROWSERS=chromium,firefox,webkit pnpm test:e2e
  *
- * The harness (timing-sensitive) and the demo (CPU-heavy: one card keeps
- * every core busy for 10 s) run as two separate passes — see package.json.
+ * The harness (timing-sensitive) and the demo (CPU-heavy: one card generates
+ * 4 million log entries on 8 threads) run as two separate passes — see
+ * package.json.
  *
  * Projects per browser:
  *   <browser>:harness       one scenario per finding, library from src/

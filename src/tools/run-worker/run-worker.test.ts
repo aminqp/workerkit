@@ -101,9 +101,10 @@ describe('run-worker', () => {
       );
 
       expect(mockContext.memoryWorkerProxy.get).not.toHaveBeenCalled();
+      // Not split, no maxConcurrency: one thread runs it
       expect(dispatched()).toEqual({
         data: { [MEMORY_INPUT]: { ref: 'ref-123' } },
-        threads: 4,
+        threads: 1,
         partitioned: false,
       });
       // freed once every worker has read it
@@ -150,6 +151,10 @@ describe('run-worker', () => {
     });
 
     it('the same srcData for several threads is stored once and read by each', async () => {
+      (mockContext.findWorkerByName as Mock).mockReturnValue({
+        func: () => {},
+        maxConcurrency: 4,
+      });
       await executeWorker(
         'testWorker' as never,
         { srcData: { big: true } },
@@ -173,6 +178,10 @@ describe('run-worker', () => {
     });
 
     it('srcData that cannot be stored is posted to each thread as before', async () => {
+      (mockContext.findWorkerByName as Mock).mockReturnValue({
+        func: () => {},
+        maxConcurrency: 4,
+      });
       (mockContext.memoryWorkerProxy.set as Mock).mockRejectedValue(
         new Error('DataCloneError'),
       );
@@ -183,6 +192,22 @@ describe('run-worker', () => {
       );
 
       expect(dispatched().data).toEqual({ big: true });
+    });
+
+    it('input that is not split runs on one thread unless maxConcurrency says otherwise', async () => {
+      await executeWorker(
+        'testWorker' as never,
+        { srcData: { big: true } },
+        mockContext,
+      );
+
+      expect(dispatched()).toEqual({
+        data: { big: true },
+        threads: 1,
+        partitioned: false,
+      });
+      // one thread needs no shared copy in the MemoryWorker
+      expect(mockContext.memoryWorkerProxy.set).not.toHaveBeenCalled();
     });
 
     it('a single thread, or partitioned srcData, is posted directly', async () => {

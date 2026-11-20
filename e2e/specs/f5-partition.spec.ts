@@ -39,10 +39,26 @@ test.describe('#5 partitioned vs unpartitioned runs, and the README Quick Start'
     expect(result).toMatchObject({ data: [1, 2], succeeded: 2 });
   });
 
-  test('unpartitioned runs repeat the full input on every thread (documented)', async ({
+  test('unpartitioned runs repeat the full input on every thread maxConcurrency asks for', async ({
     run,
   }) => {
     const result = await run('partition.unpartitionedReplicates');
     expect(result).toMatchObject({ data: [1, 2, 1, 2, 1, 2], succeeded: 3 });
+  });
+
+  test('without maxConcurrency, input that is not split runs once; partitioned input uses every core', async ({
+    run,
+  }) => {
+    const result = await run('partition.defaultThreads');
+    // v1.0.0 ran these on every core: [15, 15, …] and [{ a: 1 }, { a: 1 }, …]
+    expect(result.notPartitioned).toMatchObject({ data: [15], succeeded: 1 });
+    expect(result.notAnArray).toMatchObject({
+      data: [{ a: 1 }],
+      succeeded: 1,
+    });
+    expect(result.partitioned).toEqual({
+      succeeded: Math.min(result.cores, 1000),
+      matchesInput: true,
+    });
   });
 });

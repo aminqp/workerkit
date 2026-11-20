@@ -103,3 +103,51 @@ export async function unpartitionedReplicates() {
   factory.terminate();
   return result;
 }
+
+function echo({ data }: { data: unknown }): unknown {
+  return data;
+}
+
+/**
+ * The defaults when `maxConcurrency` is not set: input that is not split runs
+ * on one thread; partitioned array input is spread over every CPU core.
+ */
+export async function defaultThreads() {
+  const factory = new MainWorkerFactory({
+    workers: defineWorkerConfigs(
+      defineWorkerConfig({ name: 'sum', role: 'compute', func: sum }),
+      defineWorkerConfig({
+        name: 'echoPartitioned',
+        role: 'compute',
+        func: echo,
+        partition: true,
+      }),
+      defineWorkerConfig({
+        name: 'identityPartitioned',
+        role: 'compute',
+        func: identity,
+        partition: true,
+      }),
+    ),
+  });
+  const notPartitioned = summarize(
+    await factory.runWorker('sum', { srcData: [1, 2, 3, 4, 5] }),
+  );
+  const notAnArray = summarize(
+    await factory.runWorker('echoPartitioned', { srcData: { a: 1 } }),
+  );
+  const input = Array.from({ length: 1000 }, (_, i) => i);
+  const partitioned = summarize(
+    await factory.runWorker('identityPartitioned', { srcData: input }),
+  );
+  factory.terminate();
+  return {
+    notPartitioned,
+    notAnArray,
+    partitioned: {
+      succeeded: partitioned.succeeded,
+      matchesInput: JSON.stringify(partitioned.data) === JSON.stringify(input),
+    },
+    cores: navigator.hardwareConcurrency,
+  };
+}

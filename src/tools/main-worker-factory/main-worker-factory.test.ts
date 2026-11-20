@@ -264,16 +264,51 @@ describe('runWorker – positive', () => {
     expect(workerInstances).toHaveLength(3);
   });
 
-  it('falls back to navigator.hardwareConcurrency when maxConcurrency is unset', async () => {
+  it('partitions over navigator.hardwareConcurrency threads when maxConcurrency is unset', async () => {
     const factory = makeFactory([
-      { name: 'w1', role: 'computation', func: noop },
+      { name: 'w1', role: 'computation', func: noop, partition: true },
     ]);
 
-    const promise = factory.runWorker('w1', { srcData: 'x' });
+    const promise = factory.runWorker('w1', {
+      srcData: [1, 2, 3, 4, 5, 6, 7, 8],
+    });
     await autoRespond();
     await promise;
 
     expect(workerInstances).toHaveLength(4); // hardwareConcurrency mocked to 4
+  });
+
+  it('runs input that is not split on one thread when maxConcurrency is unset', async () => {
+    const factory = makeFactory([
+      { name: 'w1', role: 'computation', func: noop },
+      { name: 'w2', role: 'computation', func: noop, partition: true },
+    ]);
+
+    // Not partitioned, and partitioned but not an array: both run once
+    for (const [name, srcData] of [
+      ['w1', [1, 2, 3]],
+      ['w2', { not: 'an array' }],
+    ] as const) {
+      workerInstances.length = 0;
+      const promise = factory.runWorker(name, { srcData });
+      await autoRespond();
+      const result = await promise;
+      expect(workerInstances, name).toHaveLength(1);
+      expect(result.succeeded, name).toBe(1);
+    }
+  });
+
+  it('runs input that is not split on maxConcurrency threads when it is set', async () => {
+    const factory = makeFactory([
+      { name: 'w1', role: 'computation', func: noop, maxConcurrency: 3 },
+    ]);
+
+    const promise = factory.runWorker('w1', { srcData: [1, 2, 3] });
+    await autoRespond();
+    const result = await promise;
+
+    expect(workerInstances).toHaveLength(3);
+    expect(result.succeeded).toBe(3);
   });
 
   it('terminates each worker after it responds', async () => {

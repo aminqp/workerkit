@@ -85,7 +85,7 @@ export async function executeWorker<
   delete otherParams.__memory_ref__;
   delete otherParams.deleteMemory;
 
-  const threadCount = config.maxConcurrency ?? context.threads;
+  const threads = threadsFor(config, context);
   // Workers generated from `func`, and defineWorker workers once identified,
   // read input that is in the MemoryWorker themselves (see memory-input.ts).
   const readsInput = readsMemoryInput(config);
@@ -103,24 +103,24 @@ export async function executeWorker<
     if (readsInput) {
       // Each worker reads the stored value (or its part) straight from the
       // MemoryWorker: the data never comes to the main thread.
-      plan = await planFromMemory(memoryRef, config, threadCount, context);
+      plan = await planFromMemory(memoryRef, config, threads, context);
     } else {
       // A hand-written worker can't read from the MemoryWorker: send it the data.
       const stored = await context.memoryWorkerProxy.get(memoryRef);
       throwIfAborted(signal);
-      plan = planFromData(stored, config, threadCount);
+      plan = planFromData(stored, config, threads);
     }
   } else if (
     rawSrcData !== undefined &&
     readsInput &&
-    threadCount > 1 &&
+    threads.whole > 1 &&
     !(config.partition && Array.isArray(rawSrcData))
   ) {
     // Every thread needs the whole input: send it to the MemoryWorker once and
     // let the threads read it there, instead of posting a copy to each.
-    plan = await planFanOut(rawSrcData, threadCount, context);
+    plan = await planFanOut(rawSrcData, threads.whole, context);
   } else {
-    plan = planFromData(rawSrcData, config, threadCount);
+    plan = planFromData(rawSrcData, config, threads);
   }
 
   const promises = context.orchestrator.createWorkerPromises(
@@ -228,17 +228,39 @@ interface InputPlan {
   scratchRef?: string;
 }
 
+/** How many threads a call uses, depending on whether its input is split. */
+interface Threads {
+  /** For partitioned array input: at most this many parts. */
+  split: number;
+  /** For input that is not split: every thread runs all of it. */
+  whole: number;
+}
+
+/**
+ * Threads for a call. Partitioned array input is spread over up to
+ * `maxConcurrency` parts — every CPU core by default. Input that is not split
+ * runs whole on each thread, so it uses one thread unless `maxConcurrency`
+ * asks for more: running the same work on every core by default would only
+ * return the same result once per core.
+ */
+function threadsFor(config: WorkerConfig, context: RunWorkerContext): Threads {
+  return {
+    split: config.maxConcurrency ?? context.threads,
+    whole: config.maxConcurrency ?? 1,
+  };
+}
+
 /** Input posted to the workers by the main thread (the classic path). */
 function planFromData(
   srcData: unknown,
   config: WorkerConfig,
-  threadCount: number,
+  threads: Threads,
 ): InputPlan {
   if (config.partition && Array.isArray(srcData)) {
-    const parts = partitionArray(srcData, threadCount);
+    const parts = partitionArray(srcData, threads.split);
     return { data: parts, threads: parts.length, partitioned: true };
   }
-  return { data: srcData, threads: threadCount, partitioned: false };
+  return { data: srcData, threads: threads.whole, partitioned: false };
 }
 
 /**
@@ -249,7 +271,7 @@ function planFromData(
 async function planFromMemory(
   ref: string,
   config: WorkerConfig,
-  threadCount: number,
+  threads: Threads,
   context: RunWorkerContext,
 ): Promise<InputPlan> {
   const stored = await context.memoryWorkerProxy.describe(ref);
@@ -259,11 +281,11 @@ async function planFromMemory(
   }
   if (config.partition && stored.isArray) {
     const length = stored.length ?? 0;
-    if (length > 0 && threadCount <= 0) {
+    if (length > 0 && threads.split <= 0) {
       throw new Error('numChunks must be positive');
     }
     // Same split as partitionArray: min(threads, length) parts.
-    const parts = Math.min(threadCount, length);
+    const parts = Math.min(threads.split, length);
     return {
       data: Array.from({ length: parts }, (_, index) =>
         memoryInput(ref, { index, count: parts }),
@@ -272,7 +294,7 @@ async function planFromMemory(
       partitioned: true,
     };
   }
-  return { data: memoryInput(ref), threads: threadCount, partitioned: false };
+  return { data: memoryInput(ref), threads: threads.whole, partitioned: false };
 }
 
 /**

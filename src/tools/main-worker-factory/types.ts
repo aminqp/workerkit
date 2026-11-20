@@ -46,8 +46,14 @@ export interface WorkerConfig<TFunc extends WorkerFunction = WorkerFunction> {
    */
   _typeHint?: TFunc;
   /**
-   * Maximum number of parallel threads to spawn for this worker.
-   * Defaults to `navigator.hardwareConcurrency` when omitted.
+   * How many threads a call runs on.
+   *
+   * - With `partition` and array input: at most this many parts, one per
+   *   thread. Defaults to the number of CPU cores
+   *   (`navigator.hardwareConcurrency`).
+   * - Otherwise every thread runs the whole input and returns its own result,
+   *   so the default is `1`. Set it higher to run the same input on several
+   *   threads — e.g. simulations with different random seeds.
    */
   maxConcurrency?: number;
   /**
