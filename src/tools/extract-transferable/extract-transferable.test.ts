@@ -66,4 +66,16 @@ describe('extractTransferable', () => {
     const result = extractTransferable(cyclicObj);
     expect(result).toEqual([buffer]);
   });
+
+  it('lists a buffer shared by several views only once', () => {
+    // A transfer list with duplicates makes postMessage throw a DataCloneError
+    const data = new Float64Array([1, 2, 3, 4]);
+    const result = extractTransferable({
+      head: data.subarray(0, 2),
+      tail: data.subarray(2),
+      whole: data,
+      raw: data.buffer,
+    });
+    expect(result).toEqual([data.buffer]);
+  });
 });
