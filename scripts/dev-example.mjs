@@ -25,7 +25,6 @@ const children = new Set();
 const waiting = new Set();
 let stopping = false;
 
- 
 const stripColors = (text) => text.replace(/\u001b\[[0-9;]*m/g, '');
 
 /**

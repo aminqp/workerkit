@@ -6,9 +6,17 @@ import localRules from 'eslint-plugin-local-rules';
 
 /** @type {import('eslint').Linter.FlatConfig[]} */
 export default [
-  // Global ignores
+  // Global ignores: dependencies, plus build and test output (ESLint does not
+  // read .gitignore)
   {
-    ignores: ['dist/**', 'node_modules/**'],
+    ignores: [
+      'dist/**',
+      'node_modules/**',
+      '**/dist/**',
+      '**/test-results/**',
+      '**/playwright-report/**',
+      'e2e/.demo-dist/**',
+    ],
   },
 
   // Base config for all TypeScript files
