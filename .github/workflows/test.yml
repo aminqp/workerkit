@@ -1,0 +1,106 @@
+# Lint, type checks and unit tests, then the browser suites in Chromium,
+# Firefox and WebKit: the library scenarios (against the source and the built
+# package), every demo card, and the React example.
+name: Test
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Lint, types and unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm exec eslint .
+
+      - name: Type check
+        run: pnpm run typecheck
+
+      - name: Unit tests
+        run: pnpm test
+
+      - name: Build the library
+        run: pnpm run build:lib
+
+      - name: Type check the React example
+        run: pnpm --filter workerkit-example-react-mui typecheck
+
+  browsers:
+    name: Browser tests (${{ matrix.browser }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox, webkit]
+    env:
+      E2E_BROWSERS: ${{ matrix.browser }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Install ${{ matrix.browser }}
+        run: pnpm exec playwright install --with-deps ${{ matrix.browser }}
+
+      - name: Library scenarios (source and built package)
+        run: pnpm exec playwright test --project="*:harness*"
+        env:
+          E2E_DIST: '1'
+
+      - name: Demo app (development and production builds)
+        run: pnpm exec playwright test --project="*:demo*"
+
+      - name: React example (development and production builds)
+        run: pnpm run test:e2e:example
+
+      - name: Keep traces of failed tests
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-${{ matrix.browser }}
+          path: |
+            test-results/
+            examples/react-mui/test-results/
+          retention-days: 7
