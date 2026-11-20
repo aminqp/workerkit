@@ -1,3 +1,5 @@
+import { partBounds } from '../partition-array';
+
 /**
  * Script source for the dedicated MemoryWorker thread.
  *
@@ -7,14 +9,20 @@
  * Supports direct worker-to-MemoryWorker communication via `REGISTER_PORT`:
  * A `MessagePort` can be registered so that computing workers and reducer workers
  * can read/write data directly without routing through the main thread.
+ *
+ * Workers that start from a stored result read it here: `GET` for the whole
+ * value, `GET_PART` for one partition of a stored array (split exactly like
+ * `partitionArray`), and `DESCRIBE` tells the main thread how many items there
+ * are to split — without sending the data itself.
  */
 export const memoryWorkerScript = `
 const store = new Map();
+const partBounds = ${partBounds.toString()};
 
 function handleMessage(msg, replyTarget) {
   if (!msg || typeof msg !== 'object') return;
 
-  const { action, factoryToken, expectedToken, ref, data, id } = msg;
+  const { action, factoryToken, expectedToken, ref, data, id, part } = msg;
 
   // Initial handshake to set expected token if needed
   if (action === 'INIT_TOKEN') {
@@ -41,6 +49,37 @@ function handleMessage(msg, replyTarget) {
         const resultData = store.get(ref);
         const exists = store.has(ref);
         replyTarget.postMessage({ ok: true, exists, data: resultData, ref, id });
+        break;
+      }
+      case 'GET_PART': {
+        // One partition of a stored array — the part a partitioned worker needs.
+        const value = store.get(ref);
+        if (!store.has(ref) || !Array.isArray(value)) {
+          replyTarget.postMessage({ ok: true, exists: store.has(ref), data: undefined, ref, id });
+          break;
+        }
+        const bounds = partBounds(value.length, part.count, part.index);
+        replyTarget.postMessage({
+          ok: true,
+          exists: true,
+          data: value.slice(bounds[0], bounds[1]),
+          ref,
+          id,
+        });
+        break;
+      }
+      case 'DESCRIBE': {
+        // Shape of a stored value, so the main thread can plan partitions
+        // without receiving the data.
+        const value = store.get(ref);
+        replyTarget.postMessage({
+          ok: true,
+          exists: store.has(ref),
+          isArray: Array.isArray(value),
+          length: Array.isArray(value) ? value.length : undefined,
+          ref,
+          id,
+        });
         break;
       }
       case 'DELETE': {

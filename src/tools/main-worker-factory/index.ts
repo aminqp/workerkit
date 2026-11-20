@@ -8,4 +8,7 @@ export type {
   WorkerConfig,
   WorkerName,
   WorkerRole,
+  CollectedResult,
+  MemoryRefResult,
+  RunWorkerResult,
 } from './types.ts';

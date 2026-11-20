@@ -39,6 +39,7 @@ describe('WorkerOrchestrator', () => {
 
     context = {
       isTerminated: vi.fn().mockReturnValue(false),
+      signal: new AbortController().signal,
       trackWorker: vi.fn((worker) => worker),
       terminateWorker: vi.fn(),
       logger: {
@@ -88,6 +89,7 @@ describe('WorkerOrchestrator', () => {
         index: 0,
       }),
       0,
+      context.signal,
     );
     expect(runSpy).toHaveBeenNthCalledWith(
       2,
@@ -96,6 +98,7 @@ describe('WorkerOrchestrator', () => {
         index: 1,
       }),
       0,
+      context.signal,
     );
   });
 
@@ -128,6 +131,7 @@ describe('WorkerOrchestrator', () => {
         index: 0,
       }),
       0,
+      context.signal,
     );
     expect(runSpy).toHaveBeenNthCalledWith(
       2,
@@ -136,6 +140,7 @@ describe('WorkerOrchestrator', () => {
         index: 1,
       }),
       0,
+      context.signal,
     );
   });
 
@@ -229,5 +234,78 @@ describe('WorkerOrchestrator', () => {
     ).rejects.toThrow('MainWorkerFactory has been terminated');
 
     expect(WorkerFactory).not.toHaveBeenCalled();
+  });
+
+  describe('cancellation (factory terminated mid-call)', () => {
+    const instance = {
+      workerFunc: vi.fn() as unknown as () => void,
+      workerName: 'test',
+      index: 0,
+      data: { data: 'payload' },
+    };
+
+    it('rejects and stops the worker when the signal aborts', async () => {
+      const controller = new AbortController();
+      const promise = orchestrator.runWorkerWithRetry(
+        instance,
+        0,
+        controller.signal,
+      );
+      await flushPromises();
+
+      controller.abort();
+
+      await expect(promise).rejects.toThrow(
+        'MainWorkerFactory has been terminated',
+      );
+      expect(context.terminateWorker).toHaveBeenCalledWith(mockWorker);
+    });
+
+    it('never retries a cancelled call', async () => {
+      const controller = new AbortController();
+      const promise = orchestrator.runWorkerWithRetry(
+        instance,
+        5,
+        controller.signal,
+      );
+      await flushPromises();
+      controller.abort();
+      await expect(promise).rejects.toThrow('terminated');
+      await flushPromises();
+
+      expect(WorkerFactory).toHaveBeenCalledTimes(1);
+      expect(context.logger.info).not.toHaveBeenCalled();
+    });
+
+    it('does not start a worker for an already-aborted signal', async () => {
+      const controller = new AbortController();
+      controller.abort();
+      await expect(
+        orchestrator.runWorkerWithRetry(instance, 2, controller.signal),
+      ).rejects.toThrow('terminated');
+      expect(WorkerFactory).not.toHaveBeenCalled();
+    });
+  });
+
+  it('marks worker error events as handled', async () => {
+    const promise = orchestrator.runWorkerWithRetry(
+      {
+        workerFunc: vi.fn() as unknown as () => void,
+        workerName: 'test',
+        index: 0,
+        data: { data: 'payload' },
+      },
+      0,
+    );
+    await flushPromises();
+
+    const event = new ErrorEvent('error', {
+      message: 'boom',
+      cancelable: true,
+    });
+    mockWorker.onerror!(event as unknown as Error);
+
+    await expect(promise).rejects.toMatchObject({ index: 0 });
+    expect(event.defaultPrevented).toBe(true);
   });
 });

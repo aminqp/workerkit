@@ -7,4 +7,6 @@ export interface PersistentManagerContext {
   trackWorker: (worker: Worker) => Worker;
   logger: ILogger;
   terminateWorker: (worker: Worker) => void;
+  /** The factory's current run signal (replaced on `reset()`). */
+  readonly signal: AbortSignal;
 }

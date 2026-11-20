@@ -5,6 +5,13 @@ import {
 } from '../main-worker-factory/types';
 import { WorkerFactory, WorkerMode } from '../worker-factory';
 import { extractTransferable } from '../extract-transferable';
+import {
+  markErrorHandled,
+  onAbort,
+  terminatedError,
+  throwIfAborted,
+} from '../lifecycle';
+import { noteMemoryInputReader } from '../memory-input';
 import { OrchestratorContext } from './types';
 
 /**
@@ -16,6 +23,7 @@ import { OrchestratorContext } from './types';
  * - Handles auto-retries for failing workers without bubbling up errors prematurely.
  * - Integrates with the context to track active workers and safely clean them up upon completion.
  * - Standardizes the result wrapping into structured `WorkerResult` objects.
+ * - Stops and rejects in-flight work when the factory is terminated (via `signal`).
  */
 export class WorkerOrchestrator {
   constructor(private context: OrchestratorContext) {}
@@ -26,6 +34,7 @@ export class WorkerOrchestrator {
     srcWorkerData: { data: unknown } & Record<string, unknown>,
     threadCount: number,
     isPartitioned: boolean,
+    signal: AbortSignal = this.context.signal,
   ): Promise<WorkerResult>[] {
     const { data: srcData, ...otherParams } = srcWorkerData;
 
@@ -41,79 +50,86 @@ export class WorkerOrchestrator {
           data: { data, ...otherParams },
         },
         config.retries,
+        signal,
       );
     });
   }
 
+  /**
+   * Runs one worker instance, retrying on failure.
+   *
+   * A call whose `signal` has been aborted (the factory was terminated) is
+   * never retried — even if `reset()` has since started a new run.
+   */
   async runWorkerWithRetry(
     instanceConfig: WorkerInstanceConfig,
     retryCount = 2,
+    signal: AbortSignal = this.context.signal,
   ): Promise<WorkerResult> {
     try {
-      return await this.initiateWorker(instanceConfig);
+      return await this.initiateWorker(instanceConfig, signal);
     } catch (error) {
+      if (signal.aborted) throw terminatedError();
       if (retryCount > 0) {
         this.context.logger.info(
           `Worker ${instanceConfig.index} failed, retrying (${retryCount} left):`,
           error,
         );
-        return this.runWorkerWithRetry(instanceConfig, retryCount - 1);
+        return this.runWorkerWithRetry(instanceConfig, retryCount - 1, signal);
       }
       this.context.logger.error(`Worker failed after all retries:`, error);
       throw error;
     }
   }
 
-  private async initiateWorker({
-    workerFunc,
-    createWorker,
-    workerName,
-    index,
-    data,
-  }: WorkerInstanceConfig): Promise<WorkerResult> {
+  private async initiateWorker(
+    { workerFunc, createWorker, workerName, index, data }: WorkerInstanceConfig,
+    signal: AbortSignal,
+  ): Promise<WorkerResult> {
+    if (this.context.isTerminated()) throw terminatedError();
+    throwIfAborted(signal);
+
     // Allocate a direct MessagePort to MemoryWorker for this computing worker.
     // The worker will store its result there and only post back a ref token.
     const memPort = await this.context.memoryWorkerProxy.allocateWorkerPort();
+    if (signal.aborted) {
+      memPort.close?.();
+      throw terminatedError();
+    }
+
+    const workerConfigs = { workerFunc, createWorker, workerName, index, data };
 
     return new Promise((resolve, reject) => {
-      if (this.context.isTerminated()) {
-        reject(new Error('MainWorkerFactory has been terminated'));
-        return;
-      }
-
       const factory = new WorkerFactory(workerFunc, {
         createWorker,
         mode: WorkerMode.Memory,
       });
       const raw = this.context.trackWorker(factory.getWorker);
 
-      raw.onerror = (event) => {
+      const stopListening = onAbort(signal, () => {
         this.context.terminateWorker(raw);
-        reject({
-          index,
-          workerConfigs: {
-            workerFunc,
-            createWorker,
-            workerName,
-            index,
-            data,
-          },
-          failedResult: event,
-        });
+        reject(terminatedError());
+      });
+      const finish = () => {
+        stopListening();
+        this.context.terminateWorker(raw);
+      };
+
+      raw.onerror = (event) => {
+        markErrorHandled(event);
+        finish();
+        reject({ index, workerConfigs, failedResult: event });
       };
 
       raw.onmessage = (event) => {
+        finish();
+        // A defineWorker worker marks its replies: from now on it is sent
+        // placeholders and reads memory input itself (see memory-input.ts).
+        noteMemoryInputReader(createWorker, event.data);
         if (event.data?.ok === false) {
-          this.context.terminateWorker(raw);
           reject({
             index,
-            workerConfigs: {
-              workerFunc,
-              createWorker,
-              workerName,
-              index,
-              data,
-            },
+            workerConfigs,
             failedResult: new ErrorEvent('error', {
               message: event.data.error,
             }),
@@ -133,18 +149,9 @@ export class WorkerOrchestrator {
 
         resolve({
           index,
-          workerConfigs: {
-            workerFunc,
-            createWorker,
-            workerName,
-            index,
-            data,
-          },
-          successResult: new MessageEvent('message', {
-            data: payloadData,
-          }),
+          workerConfigs,
+          successResult: new MessageEvent('message', { data: payloadData }),
         });
-        this.context.terminateWorker(raw);
       };
 
       const payload = {

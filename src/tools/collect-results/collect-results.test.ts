@@ -8,15 +8,20 @@ import {
 
 describe('collectWorkerResults', () => {
   let mockContext: CollectResultsContext;
-  let mockLogger: { error: ReturnType<typeof vi.fn> };
+  let mockLogger: {
+    error: ReturnType<typeof vi.fn>;
+    info: ReturnType<typeof vi.fn>;
+  };
 
   beforeEach(() => {
     mockLogger = {
       error: vi.fn(),
+      info: vi.fn(),
     };
 
     mockContext = {
       isTerminated: vi.fn().mockReturnValue(false),
+      signal: new AbortController().signal,
       logger: mockLogger as unknown as CollectResultsContext['logger'],
       trackWorker: vi.fn((w) => w),
       terminateWorker: vi.fn(),
@@ -143,6 +148,7 @@ describe('collectWorkerResults', () => {
       globalThis.URL = {
         ...originalURL,
         createObjectURL: vi.fn().mockReturnValue('blob:mock'),
+        revokeObjectURL: vi.fn(),
       } as unknown as typeof URL;
 
       // Mock MessageChannel
@@ -196,6 +202,8 @@ describe('collectWorkerResults', () => {
       expect(result.data).toEqual([1, 2]);
       expect(mockContext.trackWorker).toHaveBeenCalled();
       expect(mockContext.terminateWorker).toHaveBeenCalled();
+      // The reducer script is unique to this merge, so its URL is freed.
+      expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:mock');
     });
 
     it('should fallback if worker creation throws an error', async () => {
@@ -224,6 +232,12 @@ describe('collectWorkerResults', () => {
 
       expect(result.data).toEqual([1, 2]);
       // trackWorker wouldn't be called successfully
+      // Falling back is not an error (v1.0.0 fell back silently).
+      expect(mockLogger.error).not.toHaveBeenCalled();
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        'Reducer worker failed; merging on the main thread instead',
+        expect.any(Error),
+      );
     });
 
     it('should fallback to main thread if worker returns ok: false', async () => {
@@ -257,6 +271,12 @@ describe('collectWorkerResults', () => {
         'Collect results reducer worker failed',
         'Reducer failed',
       );
+      // One error per failure, as in v1.0.0 — the fallback itself is info.
+      expect(mockLogger.error).toHaveBeenCalledTimes(1);
+      expect(mockLogger.info).toHaveBeenCalledWith(
+        'Reducer worker failed; merging on the main thread instead',
+        expect.any(Error),
+      );
     });
 
     it('should fallback to main thread if worker triggers onerror', async () => {
@@ -289,6 +309,7 @@ describe('collectWorkerResults', () => {
         'Collect results reducer worker encountered an error event',
         errorEvent,
       );
+      expect(mockLogger.error).toHaveBeenCalledTimes(1);
     });
   });
 });

@@ -38,6 +38,7 @@ describe('executePipeline', () => {
         delete: vi.fn(),
       } as unknown as PipelineContext['memoryStore'],
       isTerminated: vi.fn().mockReturnValue(false),
+      signal: new AbortController().signal,
       findWorkerByName: vi.fn().mockReturnValue({
         func: () => {},
         createWorker: undefined,
@@ -133,5 +134,39 @@ describe('executePipeline', () => {
     expect(result.data).toBe('final-result');
     expect(terminateWorkerSpy).toHaveBeenCalledWith(worker1);
     expect(terminateWorkerSpy).toHaveBeenCalledWith(worker2);
+  });
+
+  describe('replies from hand-written (non-defineWorker) last steps', () => {
+    const lastWorker = () => {
+      const { results } = (WorkerFactory as Mock).mock;
+      return results[results.length - 1].value.getWorker;
+    };
+
+    it('unwraps a { data } reply without `ok` in a single-step pipeline, as v1.0.0 did', async () => {
+      const promise = executePipeline(
+        [{ worker: 'step1', srcData: [1] }],
+        mockContext,
+      );
+      lastWorker().onmessage!({ data: { data: 'result' } });
+      expect((await promise).data).toBe('result');
+    });
+
+    it('unwraps a { data } reply without `ok` from the last of several steps, as v1.0.0 did', async () => {
+      const promise = executePipeline(
+        [{ worker: 'step1', srcData: [1] }, { worker: 'step2' }],
+        mockContext,
+      );
+      lastWorker().onmessage!({ data: { data: 'final-result' } });
+      expect((await promise).data).toBe('final-result');
+    });
+
+    it('returns a reply that has neither `ok` nor `data` as-is', async () => {
+      const promise = executePipeline(
+        [{ worker: 'step1', srcData: [1] }],
+        mockContext,
+      );
+      lastWorker().onmessage!({ data: [1, 2, 3] });
+      expect((await promise).data).toEqual([1, 2, 3]);
+    });
   });
 });

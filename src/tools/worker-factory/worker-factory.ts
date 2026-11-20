@@ -1,20 +1,87 @@
 import { WorkerFunction } from '../main-worker-factory/types';
+import { NO_DATASET_ERROR } from '../persistent-manager/protocol';
+import { MEMORY_INPUT } from '../memory-input';
+import { scriptUrl } from './script-url';
 
-/** Shared extractTransferables helper embedded into every worker script. */
+/**
+ * Shared extractTransferables helper embedded into every worker script.
+ * Mirrors `extract-transferable.ts`: collects each transferable once (two
+ * views of one buffer yield the buffer once — a duplicate entry in a transfer
+ * list makes `postMessage` throw a `DataCloneError`).
+ */
 const EXTRACT_TRANSFERABLES_SRC = `
-const extractTransferables = (value, seen = new Set()) => {
-  if (value === null || typeof value !== 'object') return [];
-  if (seen.has(value)) return [];
+const collectTransferables = (value, seen, found) => {
+  if (value === null || typeof value !== 'object') return;
+  if (seen.has(value)) return;
   seen.add(value);
   if (value instanceof ArrayBuffer || value instanceof MessagePort ||
       (typeof ImageBitmap !== 'undefined' && value instanceof ImageBitmap) ||
       (typeof OffscreenCanvas !== 'undefined' && value instanceof OffscreenCanvas)) {
-    return [value];
+    found.add(value);
+    return;
   }
-  if (ArrayBuffer.isView(value)) return [value.buffer];
-  if (Array.isArray(value)) return value.flatMap(i => extractTransferables(i, seen));
-  return Object.values(value).flatMap(v => extractTransferables(v, seen));
+  if (ArrayBuffer.isView(value)) {
+    found.add(value.buffer);
+    return;
+  }
+  const children = Array.isArray(value) ? value : Object.values(value);
+  for (const child of children) collectTransferables(child, seen, found);
 };
+const extractTransferables = (value) => {
+  const found = new Set();
+  collectTransferables(value, new Set(), found);
+  return Array.from(found);
+};
+`;
+
+/**
+ * Shared helpers embedded into the Memory and Pipeline templates: the worker's
+ * port to the MemoryWorker, requests over it, and reading an input that
+ * arrives as a `__memory_input__` placeholder (see `memory-input.ts`) — so
+ * data already in the MemoryWorker goes straight to the worker that needs it
+ * instead of through the main thread.
+ */
+const MEMORY_ACCESS_SRC = `
+let memPort = null;
+let factoryToken = null;
+let memoryRequestCount = 0;
+
+// Receives the port to the MemoryWorker (the __init_memory_port__ message).
+function acceptMemoryPort(event) {
+  memPort = event.ports[0] || event.data.memPort || null;
+  factoryToken = event.data.factoryToken;
+  if (memPort) memPort.start();
+}
+
+// Sends one request to the MemoryWorker and resolves with its reply.
+function memoryRequest(message, transfer) {
+  return new Promise((resolve, reject) => {
+    const id = 'worker_' + (++memoryRequestCount);
+    const onReply = (event) => {
+      if (!event.data || event.data.id !== id) return;
+      memPort.removeEventListener('message', onReply);
+      if (event.data.ok) resolve(event.data);
+      else reject(new Error(event.data.error || 'MemoryWorker request failed'));
+    };
+    memPort.addEventListener('message', onReply);
+    memPort.postMessage(Object.assign({}, message, { factoryToken, id }), transfer || []);
+  });
+}
+
+// Replaces a placeholder in payload.data with the data it names: the whole
+// stored value, or this worker's partition of it.
+async function resolveMemoryInput(payload) {
+  const input = payload && payload.data && payload.data[${JSON.stringify(MEMORY_INPUT)}];
+  if (!input) return payload;
+  if (!memPort) throw new Error('No MemoryWorker port to read the input from');
+  const reply = await memoryRequest(
+    input.part
+      ? { action: 'GET_PART', ref: input.ref, part: input.part }
+      : { action: 'GET', ref: input.ref },
+  );
+  if (!reply.exists) throw new Error('Memory reference "' + input.ref + '" not found');
+  return Object.assign({}, payload, { data: reply.data });
+}
 `;
 
 /**
@@ -28,15 +95,20 @@ const extractTransferables = (value, seen = new Set()) => {
  *    event data, and posts back `{ ok: true, data }` on success or
  *    `{ ok: false, error }` on failure.
  *
+ * The function is assigned to a variable before it is called: splicing the
+ * source straight into a call expression (`await ${func}(…)`) does not call
+ * arrow functions — `await ({ data }) => …(x)` is a syntax error.
+ *
  * @param func - The stringified worker function (via `.toString()`).
  * @returns A self-contained JavaScript string ready to be turned into a
  *   `Blob` worker.
  */
 const workerTemplate = (func: string) => `
 ${EXTRACT_TRANSFERABLES_SRC}
+const workerFn = ${func};
 self.addEventListener('message', async (event) => {
   try {
-    const output = await ${func}(event.data);
+    const output = await workerFn(event.data);
     self.postMessage({ ok: true, data: output }, extractTransferables(output));
   } catch (err) {
     self.postMessage({ ok: false, error: err instanceof Error ? err.message : String(err) });
@@ -61,30 +133,27 @@ self.addEventListener('message', async (event) => {
  */
 const memoryWorkerTemplate = (func: string) => `
 ${EXTRACT_TRANSFERABLES_SRC}
+${MEMORY_ACCESS_SRC}
 const workerFn = ${func};
-let memPort = null;
-let factoryToken = null;
 let pendingPayload = null;
 
 async function runAndStore(payload) {
   try {
-    const output = await workerFn(payload);
+    // The input may be a placeholder: read it (or this worker's part of it)
+    // from the MemoryWorker instead of having the main thread send it.
+    const output = await workerFn(await resolveMemoryInput(payload));
     if (!memPort) {
       // Fallback: no port provided, post data directly (legacy / opt-out path)
       self.postMessage({ ok: true, data: output }, extractTransferables(output));
       return;
     }
-    // Store directly into MemoryWorker
+    // Store directly into MemoryWorker. The output's buffers move there —
+    // this worker is about to be stopped and has no further use for them.
     const ref = 'mem_' + crypto.randomUUID();
-    await new Promise((resolve, reject) => {
-      memPort.onmessage = (e) => {
-        if (e.data && e.data.ref === ref) {
-          if (e.data.ok) resolve(e.data.ref);
-          else reject(new Error(e.data.error || 'MemoryWorker SET failed'));
-        }
-      };
-      memPort.postMessage({ action: 'SET', factoryToken, ref, data: output });
-    });
+    await memoryRequest(
+      { action: 'SET', ref, data: output },
+      extractTransferables(output),
+    );
     // Only the token reaches the main thread
     self.postMessage({ ok: true, __memory_ref__: ref });
   } catch (err) {
@@ -95,9 +164,7 @@ async function runAndStore(payload) {
 self.addEventListener('message', async (event) => {
   // Init message: receive the MemoryWorker port and factory token
   if (event.data && event.data.__init_memory_port__) {
-    memPort = event.ports[0] ?? event.data.memPort;
-    factoryToken = event.data.factoryToken;
-    if (memPort) memPort.start();
+    acceptMemoryPort(event);
     // If a payload arrived before the port, process it now
     if (pendingPayload !== null) {
       const p = pendingPayload;
@@ -127,6 +194,7 @@ self.addEventListener('message', async (event) => {
  */
 const pipelineWorkerTemplate = (func: string) => `
 ${EXTRACT_TRANSFERABLES_SRC}
+${MEMORY_ACCESS_SRC}
 const workerFn = ${func};
 let outputPort = null;
 let inputPort = null;
@@ -135,10 +203,11 @@ let stepParams = {};
 
 async function processData(data) {
   try {
-    const payload =
+    const payload = await resolveMemoryInput(
       typeof data === 'object' && data !== null && 'data' in data
         ? { ...stepParams, ...data }
-        : { data, ...stepParams, index: 0 };
+        : { data, ...stepParams, index: 0 },
+    );
     const output = await workerFn(payload);
     const result = { ok: true, data: output };
     const transfers = extractTransferables(output);
@@ -158,6 +227,11 @@ async function processData(data) {
 }
 
 self.addEventListener('message', (event) => {
+  // A first step that starts from a memory ref gets a port to read it from.
+  if (event.data && event.data.__init_memory_port__) {
+    acceptMemoryPort(event);
+    return;
+  }
   if (event.data && event.data.__pipeline_ports__) {
     if (event.data.stepParams) {
       stepParams = event.data.stepParams;
@@ -201,45 +275,58 @@ self.addEventListener('message', (event) => {
  * - Stays alive between calls (no self-termination)
  * - Caches the `dataset` from the first call
  * - On subsequent calls, reuses the cached dataset if no new one is provided
- * - Responds to `{ type: 'release' }` by closing itself
+ * - Echoes each request's `id` so overlapping calls get their own replies
+ * - Never transfers buffers that belong to the cached dataset (transferring
+ *   them would empty the cache for every later call)
+ * - Responds to a release request by closing itself
  *
- * Message protocol:
- * - `{ type: 'run', dataset?: T, config: C }` — run with optional dataset update
- * - `{ type: 'release' }` — terminate the worker and free memory
+ * Message protocol (see `persistent-manager/protocol.ts`):
+ * - `{ __persistent__: 'run', id, dataset?: T, config: C }` — run with optional dataset update
+ * - `{ __persistent__: 'release' }` — terminate the worker and free memory
+ * The legacy `type: 'run' | 'release'` field is still accepted.
  *
  * @param func - The stringified worker function (via `.toString()`).
  */
 const persistentWorkerTemplate = (func: string) => `
 ${EXTRACT_TRANSFERABLES_SRC}
 const workerFn = ${func};
-let cachedDataset = null;
+let cachedDataset;
+let hasDataset = false;
+let cachedTransferables = new Set();
 
 self.addEventListener('message', async (event) => {
   const msg = event.data;
+  const operation = msg && (msg.__persistent__ || msg.type);
+  const id = msg ? msg.id : undefined;
 
-  if (msg && msg.type === 'release') {
-    cachedDataset = null;
-    self.postMessage({ ok: true, data: null, type: 'released' });
+  if (operation === 'release') {
+    cachedDataset = undefined;
+    hasDataset = false;
+    cachedTransferables = new Set();
+    self.postMessage({ ok: true, data: null, type: 'released', id });
     self.close();
     return;
   }
 
-  if (msg && msg.type === 'run') {
+  if (operation === 'run') {
     // Update cache if new dataset provided
     if (msg.dataset !== undefined) {
       cachedDataset = msg.dataset;
+      hasDataset = true;
+      cachedTransferables = new Set(extractTransferables(cachedDataset));
     }
 
-    if (cachedDataset === null) {
-      self.postMessage({ ok: false, error: 'No dataset cached. Provide a dataset on the first call.' });
+    if (!hasDataset) {
+      self.postMessage({ ok: false, error: ${JSON.stringify(NO_DATASET_ERROR)}, id });
       return;
     }
 
     try {
       const output = await workerFn({ data: cachedDataset, config: msg.config });
-      self.postMessage({ ok: true, data: output }, extractTransferables(output));
+      const transfer = extractTransferables(output).filter((t) => !cachedTransferables.has(t));
+      self.postMessage({ ok: true, data: output, id }, transfer);
     } catch (err) {
-      self.postMessage({ ok: false, error: err instanceof Error ? err.message : String(err) });
+      self.postMessage({ ok: false, error: err instanceof Error ? err.message : String(err), id });
     }
     return;
   }
@@ -318,11 +405,8 @@ class WorkerFactory {
       const mode = options?.mode ?? WorkerMode.Default;
 
       const workerCode: string = TEMPLATES[mode](workerFunction.toString());
-      const workerBlob = new Blob([workerCode], {
-        type: 'application/javascript',
-      });
-
-      this._worker = new Worker(URL.createObjectURL(workerBlob));
+      // Workers running the same script share one blob URL (see script-url.ts).
+      this._worker = new Worker(scriptUrl(workerCode));
     } else {
       throw new Error(
         'Either workerFunction or options.createWorker must be provided to WorkerFactory.',

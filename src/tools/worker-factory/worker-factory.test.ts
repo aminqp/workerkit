@@ -44,10 +44,13 @@ const BlobSpy = vi.fn(function (parts: BlobPart[], options?: BlobPropertyBag) {
 vi.stubGlobal('Blob', BlobSpy);
 
 import WorkerFactory from './worker-factory';
+import { forgetScriptUrls } from './script-url';
 
 // ---------------------------------------------------------------------------
 
 beforeEach(() => {
+  // Each test sees a fresh blob URL cache (see script-url.ts).
+  forgetScriptUrls();
   workerInstances.length = 0;
   blobParts.length = 0;
   MockWorker.mockClear();
@@ -109,6 +112,21 @@ describe('WorkerFactory – positive', () => {
     new WorkerFactory(() => {});
     expect(MockWorker).toHaveBeenCalledTimes(2);
     expect(workerInstances[0]).not.toBe(workerInstances[1]);
+  });
+
+  it('workers running the same script share one blob URL', () => {
+    const fn = ({ data }: { data: number }) => data * 2;
+    new WorkerFactory(fn);
+    new WorkerFactory(fn);
+    expect(MockWorker).toHaveBeenCalledTimes(2);
+    expect(URL.createObjectURL).toHaveBeenCalledTimes(1);
+    expect(BlobSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('different scripts get different blob URLs', () => {
+    new WorkerFactory(({ data }: { data: number }) => data * 2);
+    new WorkerFactory(({ data }: { data: number }) => data * 3);
+    expect(URL.createObjectURL).toHaveBeenCalledTimes(2);
   });
 });
 

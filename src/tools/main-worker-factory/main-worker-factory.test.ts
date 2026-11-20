@@ -1,6 +1,8 @@
 import { describe, it, expect, vi, beforeEach, Mock } from 'vitest';
 import MainWorkerFactory from './main-worker-factory';
 import { WorkerConfig } from './types';
+import { MEMORY_INPUT, type MemoryInputSpec } from '../memory-input';
+import { partBounds } from '../partition-array';
 
 // ---------------------------------------------------------------------------
 // Mock WorkerFactory so no real Worker / Blob / URL.createObjectURL is needed
@@ -12,30 +14,58 @@ const { mockMemoryStore } = vi.hoisted(() => ({
 
 vi.mock('../memory-store/memory-worker-proxy', () => {
   return {
+    // Mirrors the real proxy's lifecycle: once terminated, a proxy is dead
+    // for good and every call rejects — a fresh instance is needed to work
+    // again (which is what MainWorkerFactory.reset() must create).
     MemoryWorkerProxy: class MockProxy {
       store = mockMemoryStore;
-      allocateWorkerPort = vi.fn().mockResolvedValue({} as MessagePort);
+      terminated = false;
+      private alive() {
+        if (this.terminated) {
+          throw new Error('MainWorkerFactory has been terminated');
+        }
+      }
+      allocateWorkerPort = vi.fn(async () => {
+        this.alive();
+        return {} as MessagePort;
+      });
       async set(data: unknown, ref?: string) {
+        this.alive();
         const actualRef = ref || 'mem_' + crypto.randomUUID();
         this.store.set(actualRef, data);
         return actualRef;
       }
       async get(ref: string) {
+        this.alive();
         return this.store.get(ref);
       }
       async has(ref: string) {
+        this.alive();
         return this.store.has(ref);
       }
+      async describe(ref: string) {
+        this.alive();
+        const value = this.store.get(ref);
+        return {
+          exists: this.store.has(ref),
+          isArray: Array.isArray(value),
+          length: Array.isArray(value) ? value.length : undefined,
+        };
+      }
       async delete(ref: string) {
+        this.alive();
         return this.store.delete(ref);
       }
       async clear() {
+        this.alive();
         this.store.clear();
       }
       async stats() {
+        this.alive();
         return { count: this.store.size, refs: Array.from(this.store.keys()) };
       }
       terminate = vi.fn().mockImplementation(() => {
+        this.terminated = true;
         this.store.clear();
       });
     },
@@ -50,6 +80,12 @@ type RawWorkerMock = {
   onmessage: ((e: MessageEvent) => void) | null;
   onerror: ((e: ErrorEvent) => void) | null;
   isMemoryWorker: boolean;
+  /**
+   * The `data` of each payload this worker received, as the worker sees it:
+   * a `__memory_input__` placeholder is read from the store when posted, the
+   * way a real worker reads it from the MemoryWorker.
+   */
+  inputs: unknown[];
   /** helper: simulate a successful response */
   respond: (data: unknown) => void;
   /** helper: simulate an error */
@@ -58,18 +94,37 @@ type RawWorkerMock = {
 
 const workerInstances: RawWorkerMock[] = [];
 
+/** What a worker reads for `data`: the data itself, or what a placeholder names. */
+function readInput(data: unknown): unknown {
+  const input = (data as Record<string, MemoryInputSpec> | null)?.[
+    MEMORY_INPUT
+  ];
+  if (!input) return data;
+  const stored = mockMemoryStore.get(input.ref);
+  if (!input.part || !Array.isArray(stored)) return stored;
+  const [start, end] = partBounds(
+    stored.length,
+    input.part.count,
+    input.part.index,
+  );
+  return stored.slice(start, end);
+}
+
 function createMockWorker(): RawWorkerMock {
   console.log('createMockWorker called!');
   const mock: RawWorkerMock = {
     postMessage: vi.fn((data) => {
       if (data && data.__init_memory_port__) {
         mock.isMemoryWorker = true;
+      } else if (data && typeof data === 'object' && 'data' in data) {
+        mock.inputs.push(readInput(data.data));
       }
     }),
     terminate: vi.fn(),
     onmessage: null,
     onerror: null,
     isMemoryWorker: false,
+    inputs: [],
     respond(data: unknown) {
       console.log('worker.respond called with', data);
 
@@ -273,13 +328,17 @@ describe('runWorker – positive', () => {
     await autoRespond();
     await promise;
 
-    // both workers receive the full array
-    workerInstances.forEach((worker) =>
+    // both workers receive the full array — read from the MemoryWorker,
+    // so the main thread posts it once instead of once per worker
+    workerInstances.forEach((worker) => {
+      expect(worker.inputs).toEqual([arr]);
       expect(worker.postMessage).toHaveBeenCalledWith(
-        expect.objectContaining({ data: arr }),
+        expect.objectContaining({
+          data: { [MEMORY_INPUT]: { ref: expect.any(String) } },
+        }),
         expect.any(Array),
-      ),
-    );
+      );
+    });
   });
 
   it('forwards extra params alongside data', async () => {
@@ -493,10 +552,7 @@ describe('runWorker – edge cases', () => {
     await promise;
 
     workerInstances.forEach((worker) =>
-      expect(worker.postMessage).toHaveBeenCalledWith(
-        expect.objectContaining({ data: { scalar: true } }),
-        expect.any(Array),
-      ),
+      expect(worker.inputs).toEqual([{ scalar: true }]),
     );
   });
 
@@ -537,9 +593,8 @@ describe('runWorker – edge cases', () => {
 
     // Not an array, so it is treated as a single non-partitionable block and broadcast to ALL threads
     expect(workerInstances).toHaveLength(4);
-    expect(workerInstances[0].postMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ data: { a: 1 } }),
-      expect.any(Array),
+    workerInstances.forEach((worker) =>
+      expect(worker.inputs).toEqual([{ a: 1 }]),
     );
   });
 
@@ -571,10 +626,7 @@ describe('runWorker – edge cases', () => {
 
     // Treats as non-array scalar, broadcasts to all 2 workers
     expect(workerInstances).toHaveLength(2);
-    expect(workerInstances[0].postMessage).toHaveBeenCalledWith(
-      expect.objectContaining({ data: null }),
-      expect.any(Array),
-    );
+    workerInstances.forEach((worker) => expect(worker.inputs).toEqual([null]));
   });
 
   it('result includes correct index per worker', async () => {
@@ -700,7 +752,7 @@ describe('MainWorkerFactory – createWorker support', () => {
       ]);
 
       // Start a persistent worker
-      factory.runPersistent('w1', { config: {} });
+      const pending = factory.runPersistent('w1', { config: {} });
       await new Promise((resolve) => setTimeout(resolve, 0));
 
       expect(factory.isTerminated).toBe(false);
@@ -708,6 +760,9 @@ describe('MainWorkerFactory – createWorker support', () => {
       factory.terminate();
 
       expect(factory.isTerminated).toBe(true);
+      await expect(pending).rejects.toThrow(
+        'MainWorkerFactory has been terminated',
+      );
       workerInstances.forEach((worker) => {
         expect(worker.terminate).toHaveBeenCalled();
       });
@@ -718,12 +773,15 @@ describe('MainWorkerFactory – createWorker support', () => {
         { name: 'w1', role: 'compute', func: noop },
       ]);
 
-      factory.runPersistent('w1', { config: {} });
+      const pending = factory.runPersistent('w1', { config: {} });
       await new Promise((resolve) => setTimeout(resolve, 0));
 
       factory.destroy();
 
       expect(factory.isTerminated).toBe(true);
+      await expect(pending).rejects.toThrow(
+        'MainWorkerFactory has been terminated',
+      );
       workerInstances.forEach((worker) => {
         expect(worker.terminate).toHaveBeenCalled();
       });
@@ -761,12 +819,18 @@ describe('MainWorkerFactory – createWorker support', () => {
         { name: 'w1', role: 'compute', func: noop, maxConcurrency: 1 },
       ]);
 
-      factory.runPersistent('w1', { config: {} });
+      const pending = factory.runPersistent('w1', { config: {} });
       await new Promise((resolve) => setTimeout(resolve, 0));
+      const proxyBeforeReset = factory['_memoryWorkerProxy'];
 
       factory.reset();
 
       expect(factory.isTerminated).toBe(false);
+      await expect(pending).rejects.toThrow(
+        'MainWorkerFactory has been terminated',
+      );
+      // The old MemoryWorker is dead; reset() must have created a new one
+      expect(factory['_memoryWorkerProxy']).not.toBe(proxyBeforeReset);
 
       const promise = factory.runWorker('w1', { srcData: { test: 1 } });
       await autoRespond({ data: 'ok-after-reset' });
@@ -784,6 +848,11 @@ describe('MainWorkerFactory – createWorker support', () => {
 
       factory.terminate();
 
+      await expect(factory.getMemoryStats()).rejects.toThrow(
+        'MainWorkerFactory has been terminated',
+      );
+      // ...and a reset brings it back, empty
+      factory.reset();
       expect((await factory.getMemoryStats()).count).toBe(0);
     });
 
@@ -916,15 +985,17 @@ describe('MainWorkerFactory – createWorker support', () => {
       });
       await new Promise((resolve) => setTimeout(resolve, 0));
 
-      // Check worker instance received resolved dataset as srcData (data field in payload)
+      // The consumer reads the stored dataset itself: the main thread posts
+      // only a placeholder naming the ref, never the data.
       const consumerWorkerInstance =
         workerInstances[workerInstances.length - 1];
       expect(consumerWorkerInstance.postMessage).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: [{ items: ['a', 'b', 'c'] }],
-        }),
+        expect.objectContaining({ data: { [MEMORY_INPUT]: { ref } } }),
         expect.any(Array),
       );
+      expect(consumerWorkerInstance.inputs).toEqual([
+        [{ items: ['a', 'b', 'c'] }],
+      ]);
 
       await autoRespond({ status: 'done' });
       await consPromise;
@@ -1266,7 +1337,8 @@ describe('MainWorkerFactory – createWorker support', () => {
 
       expect(sentPayload.__memory_ref__).toBeUndefined();
       expect(sentPayload.deleteMemory).toBeUndefined();
-      expect(sentPayload.data).toEqual([{ numbers: [1, 2] }]);
+      expect(sentPayload.data).toEqual({ [MEMORY_INPUT]: { ref } });
+      expect(consumerWorkerInstance.inputs).toEqual([[{ numbers: [1, 2] }]]);
 
       await autoRespond({ ok: true });
       await consPromise;
@@ -1283,25 +1355,32 @@ describe('MainWorkerFactory – createWorker support', () => {
       await factory['_memoryWorkerProxy'].set(['item1', 'item2'], testRef);
       factory['_memoryStore'].register(testRef);
 
-      void factory.pipeline([
+      const pipeline = factory.pipeline([
         { worker: 'step1', __memory_ref__: testRef, deleteMemory: true },
         { worker: 'step2' },
       ]);
 
       await new Promise((resolve) => setTimeout(resolve, 0));
 
-      // Check worker 0 received resolved dataset
+      // Step 1 reads the stored dataset itself, over its own MemoryWorker port
       const step1Worker = workerInstances[workerInstances.length - 2];
       expect(step1Worker.postMessage).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: ['item1', 'item2'],
+          __init_memory_port__: true,
+          storeResult: false,
         }),
         expect.any(Array),
       );
+      expect(step1Worker.inputs).toEqual([['item1', 'item2']]);
 
-      // Memory reference should be deleted
-      const stats = await factory.getMemoryStats();
-      expect(stats.count).toBe(0);
+      // ...so the ref is deleted once the pipeline is done, not before
+      expect((await factory.getMemoryStats()).count).toBe(1);
+      workerInstances[workerInstances.length - 1].respond({
+        ok: true,
+        data: 'done',
+      });
+      await expect(pipeline).resolves.toMatchObject({ data: 'done' });
+      expect((await factory.getMemoryStats()).count).toBe(0);
     });
 
     it('resolves __memory_ref__ passed as stepParams to steps beyond step 0', async () => {

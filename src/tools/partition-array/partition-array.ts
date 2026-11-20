@@ -16,16 +16,33 @@ export function partitionArray<T>(array: T[], numChunks: number): T[][] {
   if (numChunks <= 0) throw new Error('numChunks must be positive');
 
   const chunks = Math.min(numChunks, array.length);
-  const chunkSize = Math.floor(array.length / chunks);
-  const remainder = array.length % chunks;
-  const result: T[][] = [];
-  let start = 0;
+  return Array.from({ length: chunks }, (_, chunkIndex) => {
+    const [start, end] = partBounds(array.length, chunks, chunkIndex);
+    return array.slice(start, end);
+  });
+}
 
-  for (let chunkIndex = 0; chunkIndex < chunks; chunkIndex++) {
-    const size = chunkSize + (chunkIndex < remainder ? 1 : 0);
-    result.push(array.slice(start, start + size));
-    start += size;
-  }
-
-  return result;
+/**
+ * Start and end (exclusive) of part `index` when `length` items are split
+ * into `parts` parts the way {@link partitionArray} splits them: as equal as
+ * possible, with the first `length % parts` parts one item larger.
+ *
+ * Self-contained on purpose: it is also embedded into the MemoryWorker's
+ * script, so a worker that reads its part from the MemoryWorker gets exactly
+ * the slice `partitionArray` would have given it.
+ *
+ * @param length - Number of items being split.
+ * @param parts - Number of parts (at most `length`).
+ * @param index - Which part, from 0.
+ * @returns `[start, end)` indices into the array.
+ */
+export function partBounds(
+  length: number,
+  parts: number,
+  index: number,
+): [number, number] {
+  const size = Math.floor(length / parts);
+  const remainder = length % parts;
+  const start = index * size + Math.min(index, remainder);
+  return [start, start + size + (index < remainder ? 1 : 0)];
 }

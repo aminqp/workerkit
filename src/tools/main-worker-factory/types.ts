@@ -62,18 +62,26 @@ export interface WorkerConfig<TFunc extends WorkerFunction = WorkerFunction> {
    */
   partition?: boolean;
   /**
-   * A list of worker functions that must complete before this worker can start.
-   * If any dependency fails, this worker will not run.
+   * @deprecated Not implemented — setting it has no effect. It will be removed
+   * in the next major version. To run workers in sequence, use `pipeline()`.
    */
   dependencies?: Array<() => void>;
   /**
-   * When `true`, the worker's output is saved in the isolated `MemoryWorker`
-   * and returned alongside a `__memory_ref__` token.
+   * When `true`, `runWorker` stores the merged result in the isolated
+   * `MemoryWorker` and returns it together with a `__memory_ref__` token that
+   * the next worker can consume. The reducer worker writes it directly, so
+   * storing it does not route the data through the main thread again.
    */
   memory?: boolean;
   /**
-   * When `true`, the worker's output is saved in the isolated `MemoryWorker`
-   * and **only** the `__memory_ref__` token is returned (0 bytes data transferred back to main thread).
+   * When `true`, `runWorker` stores the merged result in the isolated
+   * `MemoryWorker` and returns **only** the `__memory_ref__` token — the
+   * result has no `data`, so the dataset never reaches the main thread.
+   * Takes precedence over `memory`.
+   *
+   * Write the literal `true` here for TypeScript to type the result as
+   * {@link MemoryRefResult}; a `boolean` variable leaves it typed as
+   * {@link CollectedResult}, even though `data` may then be missing.
    */
   memoryOnly?: boolean;
 }
@@ -107,6 +115,49 @@ export type WorkerConfigMap<T extends readonly WorkerConfig<any>[]> = {
       ? NonNullable<Extract<T[number], { name: K }>['func']>
       : WorkerFunction;
 };
+
+/**
+ * The full config type registered under `TName` in a tuple of configs.
+ *
+ * @typeParam T - The readonly tuple of `WorkerConfig` values.
+ * @typeParam TName - The worker name to look up.
+ */
+export type WorkerConfigByName<
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  T extends readonly WorkerConfig<any>[],
+  TName extends string,
+> = Extract<T[number], { name: TName }>;
+
+/**
+ * Result of `runWorker` for a worker configured with `memoryOnly: true`:
+ * only the ref to the merged result, which stays in the MemoryWorker.
+ */
+export interface MemoryRefResult {
+  /** Never present — use `__memory_ref__` to pass the result to the next worker. */
+  data?: undefined;
+  /** Number of shards that succeeded */
+  succeeded: number;
+  /** Number of shards that failed (after all retries) */
+  failed: number;
+  /** Raw rejected results, if any */
+  errors: PromiseRejectedResult[];
+  /** Ref of the stored result; absent only if every shard failed. */
+  __memory_ref__?: string;
+}
+
+/**
+ * What `runWorker` resolves to for a given config: {@link MemoryRefResult}
+ * for `memoryOnly: true` workers, otherwise {@link CollectedResult}.
+ *
+ * Falls back to `CollectedResult` when the config cannot be looked up by
+ * name (e.g. configs typed loosely as `WorkerConfig[]`), or when `memoryOnly`
+ * is typed as `boolean` rather than the literal `true`.
+ */
+export type RunWorkerResult<TConfig, R> = [TConfig] extends [never]
+  ? CollectedResult<R>
+  : TConfig extends { memoryOnly: true }
+    ? MemoryRefResult
+    : CollectedResult<R>;
 
 /**
  * Extracts the `params` type from a {@link WorkerFunction}.
@@ -257,7 +308,8 @@ export interface CollectedResult<R> {
   /** Raw rejected results, if any */
   errors: PromiseRejectedResult[];
   /**
-   * Present when the worker config has `memory: true`.
+   * Present when the worker config has `memory: true` (for `memoryOnly: true`,
+   * `runWorker` returns a {@link MemoryRefResult} instead).
    * The ref under which the merged result is stored in MemoryWorker,
    * allowing it to be passed to subsequent workers without re-serializing.
    */
@@ -268,7 +320,12 @@ export interface CollectedResult<R> {
 export interface PipelineStep {
   /** Name of the registered worker to run */
   worker: string;
-  /** Input data for the first step (subsequent steps receive previous output) */
+  /**
+   * Input data for the first step (subsequent steps receive previous output).
+   * The first step may pass `__memory_ref__` instead, to start from stored
+   * data: it reads the data straight from the MemoryWorker
+   * (`deleteMemory: true` frees it when the pipeline finishes).
+   */
   srcData?: unknown;
   /** Any additional step parameters, configs, or options forwarded to the worker payload. */
   [key: string]: unknown;
