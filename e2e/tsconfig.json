@@ -1,0 +1,12 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "baseUrl": "..",
+    "paths": {
+      "@offmain/workerkit": ["src/tools/index.ts"],
+      "@offmain/workerkit/define-worker": ["src/tools/define-worker/index.ts"]
+    },
+    "types": ["node"]
+  },
+  "include": ["./**/*.ts", "../playwright.config.ts"]
+}
