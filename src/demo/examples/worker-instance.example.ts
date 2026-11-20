@@ -6,8 +6,8 @@
  * because bundlers statically analyze the `new Worker(new URL(...))` expression in consumer source code,
  * bundling the worker as an individual JS chunk while allowing workerkit to scale `maxConcurrency`.
  */
-import { MainWorkerFactory } from '../tools';
-import WorkerFactory from '../tools/worker-factory/worker-factory';
+import { MainWorkerFactory } from '../../tools';
+import WorkerFactory from '../../tools/worker-factory/worker-factory';
 
 export async function runWorkerInstanceExample() {
   const workerScript = `

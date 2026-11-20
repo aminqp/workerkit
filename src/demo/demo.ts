@@ -1,4 +1,4 @@
-import expensiveComputation1 from './examples/expensive-computation-1.worker.ts';
+import { wait as expensiveComputation1 } from './examples/expensive-computation-1.worker.ts';
 import {
   MainWorkerFactory,
   defineWorkerConfig,
@@ -234,7 +234,9 @@ const workerConfigs = defineWorkerConfigs(
         new URL('./examples/bundler-luxon-i18n.worker.ts', import.meta.url),
         { type: 'module' },
       ),
-    maxConcurrency: 2,
+    // srcData is one object (not an array), so it cannot be partitioned —
+    // more than one thread would transform every item once per thread.
+    maxConcurrency: 1,
   }),
   defineWorkerConfig<(p: { data: unknown }) => { ok: boolean; data: string }>()(
     {

@@ -1,5 +1,5 @@
 import { setRunning, setStatus, setDone, setError } from '../ui-helpers';
-import type { LogReport } from '../../examples/log-analyzer.worker.ts';
+import type { LogReport } from '../examples/log-analyzer.worker.ts';
 import { foreman } from '../demo.ts';
 
 export function initLogsCard() {

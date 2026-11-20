@@ -1,5 +1,5 @@
 import { setStatus, setDone, setError } from '../ui-helpers';
-import type { AggregateResult } from '../../examples/pipeline-benchmark.worker.ts';
+import type { AggregateResult } from '../examples/pipeline-benchmark.worker.ts';
 import { foreman } from '../demo.ts';
 
 export function initPipelineBenchCard() {

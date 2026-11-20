@@ -1,5 +1,5 @@
 import { setRunning, setStatus, setDone, setError } from '../ui-helpers';
-import type { FlakyTaskResult } from '../../examples/flaky-task.worker.ts';
+import type { FlakyTaskResult } from '../examples/flaky-task.worker.ts';
 import { foreman } from '../demo.ts';
 
 export function initFlakyCard() {

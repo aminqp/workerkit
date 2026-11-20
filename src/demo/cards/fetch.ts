@@ -1,5 +1,5 @@
 import { setRunning, setDone, setError } from '../ui-helpers';
-import type { EnrichedPost } from '../../examples/fetch-posts.worker.ts';
+import type { EnrichedPost } from '../examples/fetch-posts.worker.ts';
 import { foreman } from '../demo.ts';
 
 export function initFetchCard() {
