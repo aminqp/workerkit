@@ -62,11 +62,6 @@ export interface WorkerConfig<TFunc extends WorkerFunction = WorkerFunction> {
    */
   partition?: boolean;
   /**
-   * @deprecated Not implemented — setting it has no effect. It will be removed
-   * in the next major version. To run workers in sequence, use `pipeline()`.
-   */
-  dependencies?: Array<() => void>;
-  /**
    * When `true`, `runWorker` stores the merged result in the isolated
    * `MemoryWorker` and returns it together with a `__memory_ref__` token that
    * the next worker can consume. The reducer worker writes it directly, so

@@ -46,6 +46,15 @@ export async function memoryOnlyResultHasNoData() {
   return { ref, numbers };
 }
 
+/** The removed `dependencies` option is an unknown property of WorkerConfig. */
+export const removedDependenciesOption: WorkerConfig = {
+  name: 'withDependencies',
+  role: 'compute',
+  func: makeNumbers,
+  // @ts-expect-error — `dependencies` was removed in 2.0
+  dependencies: [],
+};
+
 /** Configs typed loosely as WorkerConfig[] still get a usable result type. */
 export async function looselyTypedConfigs(workers: WorkerConfig[]) {
   const factory = new MainWorkerFactory({ workers });
