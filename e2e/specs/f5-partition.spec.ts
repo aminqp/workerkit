@@ -1,8 +1,8 @@
-import { test, expect, readRepoFile } from './support';
+import { test, expect, readReadme } from './support';
 
 test.describe('#5 partitioned vs unpartitioned runs, and the README Quick Start', () => {
   test('the README Quick Start prints what it claims', async ({ run }) => {
-    const readme = readRepoFile('README.md');
+    const readme = readReadme();
     const quickStart = readme.slice(
       readme.indexOf('## Quick Start'),
       readme.indexOf('\n---', readme.indexOf('## Quick Start')),

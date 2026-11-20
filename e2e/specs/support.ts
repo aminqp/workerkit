@@ -53,10 +53,10 @@ export const rejected = (pattern: RegExp) => ({
   error: expect.stringMatching(pattern),
 });
 
-/** Reads a file relative to the repository root. */
-export function readRepoFile(path: string): string {
-  return readFileSync(
-    fileURLToPath(new URL(`../../${path}`, import.meta.url)),
-    'utf8',
-  );
+/** The repository's README, which some specs check against the code. */
+const README = fileURLToPath(new URL('../../README.md', import.meta.url));
+
+/** Reads README.md (a fixed path — no caller-supplied paths are read). */
+export function readReadme(): string {
+  return readFileSync(README, 'utf8');
 }

@@ -1,4 +1,4 @@
-import { test, expect, readRepoFile } from './support';
+import { test, expect, readReadme } from './support';
 
 test.describe('#7 retries', () => {
   test('a failing worker runs 3 times by default (1 try + 2 retries)', async ({
@@ -21,7 +21,7 @@ test.describe('#7 retries', () => {
   }
 
   test('the README documents the real default', () => {
-    const row = readRepoFile('README.md')
+    const row = readReadme()
       .split('\n')
       .find((line) => line.startsWith('| `retries`'));
     expect(row).toBeDefined();
