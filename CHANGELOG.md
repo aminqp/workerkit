@@ -1,5 +1,49 @@
 # Changelog
 
+# [2.0.0](https://github.com/aminqp/workerkit/compare/v1.0.0...v2.0.0) (2026-11-20)
+
+### Bug Fixes
+
+- **demo:** repair broken imports and demo card issues ([fd02c0e](https://github.com/aminqp/workerkit/commit/fd02c0e7791dd2054f4f01e441cb788aca46e9c0))
+- **eslint-plugin:** load configs.recommended and accept bundled workers ([b90aabb](https://github.com/aminqp/workerkit/commit/b90aabb3d5c51b41162566e3f67a287e39d003e1))
+- run input that is not split on one thread by default ([8509e10](https://github.com/aminqp/workerkit/commit/8509e10ceeb1fed6ac9c8b23438d605caf229905))
+- transfer each buffer only once ([b3dcb62](https://github.com/aminqp/workerkit/commit/b3dcb622e70afc873d84e70ce7e1374bf05e4685))
+
+### Code Refactoring
+
+- remove the deprecated dependencies option ([efa41b1](https://github.com/aminqp/workerkit/commit/efa41b110e99b06e14119a9e3bf4eb3926d2608f))
+
+### Features
+
+- **examples:** add a React + MUI example ([f888453](https://github.com/aminqp/workerkit/commit/f88845342b64d3831bff0642b6fe1fb61628976c))
+- MemoryWorker data hub, dependable lifecycle and persistent calls ([125e1e9](https://github.com/aminqp/workerkit/commit/125e1e9f802391276834eaaf342e06878c1ca0fe))
+
+### BREAKING CHANGES
+
+- without maxConcurrency, input that is not split (no
+  `partition`, or `partition` with input that is not an array) runs on one
+  thread instead of every CPU core. The result holds one copy instead of
+  one per core, and a reducer that sums the copies returns the value
+  itself instead of that value times the core count. Set maxConcurrency to
+  run the same input on several threads.
+- the `dependencies` option is removed from WorkerConfig.
+  Delete it from your configs; to run workers in sequence, use pipeline().
+- behaviour that existing code may rely on has changed;
+  see "Upgrading from v1.0.0" in the README for what to do.
+
+* Calls still running when terminate() or reset() is called reject with
+  "MainWorkerFactory has been terminated" (they never settled before).
+  getMemoryStats(), deleteMemory() and clearMemory() reject after
+  terminate() until reset().
+* memoryOnly results no longer include `data`; they are typed
+  MemoryRefResult.
+* runPersistent() and pipeline() failures reject with an Error instead
+  of an ErrorEvent, and release() rejects calls waiting on that worker.
+* **memory_ref** and deleteMemory are never passed to worker functions.
+* runPersistent() with dataset: null caches null instead of failing.
+* A pipeline started from a ref with deleteMemory: true frees the ref
+  when the pipeline finishes, not before it starts.
+
 # [1.0.0](https://github.com/aminqp/workerkit/compare/v0.14.1...v1.0.0) (2026-09-06)
 
 - BREAKING CHANGE feat(types): introduce defineWorkerConfig helpers, curried type inference, and reorganize demo suite ([39ecb97](https://github.com/aminqp/workerkit/commit/39ecb978ca8f93cd7d95e6dffe03b8ef2a85129d))
