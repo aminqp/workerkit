@@ -1,5 +1,5 @@
 import { setStatus, setDone } from '../ui-helpers';
-import { runOnMainThread } from '../../examples/benchmark.worker.ts';
+import { runOnMainThread } from '../examples/benchmark.worker.ts';
 
 const BENCH_SIZE = 350;
 const BENCH_COUNT = 6;

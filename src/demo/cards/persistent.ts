@@ -5,7 +5,7 @@ import {
   setError,
   setResult,
 } from '../ui-helpers';
-import type { TransformResult } from '../../examples/persistent-transform.worker.ts';
+import type { TransformResult } from '../examples/persistent-transform.worker.ts';
 import { foreman } from '../demo.ts';
 
 export function initPersistentCard() {

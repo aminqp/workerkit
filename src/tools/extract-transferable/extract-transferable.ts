@@ -6,7 +6,9 @@
  * reduces memory usage and improves performance when sending large datasets.
  *
  * This utility traverses arrays, objects, and nested structures to collect all valid transferables.
- * It also intelligently handles circular references by maintaining a `seen` Set.
+ * It handles circular references by tracking visited objects, and returns each transferable only
+ * once: several views over one `ArrayBuffer` yield that buffer a single time, because a transfer
+ * list with duplicate entries makes `postMessage` throw a `DataCloneError`.
  *
  * @param value - The input value to scan for transferable objects.
  * @param seen - An optional Set used internally to track visited objects and prevent infinite recursion in cyclic structures.
@@ -16,8 +18,18 @@ export function extractTransferable(
   value: unknown,
   seen = new Set<object>(),
 ): Transferable[] {
-  if (value === null || typeof value !== 'object') return [];
-  if (seen.has(value as object)) return [];
+  const found = new Set<Transferable>();
+  collect(value, seen, found);
+  return Array.from(found);
+}
+
+function collect(
+  value: unknown,
+  seen: Set<object>,
+  found: Set<Transferable>,
+): void {
+  if (value === null || typeof value !== 'object') return;
+  if (seen.has(value as object)) return;
   seen.add(value as object);
 
   if (
@@ -26,18 +38,17 @@ export function extractTransferable(
     (typeof ImageBitmap !== 'undefined' && value instanceof ImageBitmap) ||
     (typeof OffscreenCanvas !== 'undefined' && value instanceof OffscreenCanvas)
   ) {
-    return [value as Transferable];
+    found.add(value as Transferable);
+    return;
   }
 
   if (ArrayBuffer.isView(value)) {
-    return [value.buffer];
+    found.add(value.buffer as ArrayBuffer);
+    return;
   }
 
-  if (Array.isArray(value)) {
-    return value.flatMap((item) => extractTransferable(item, seen));
-  }
-
-  return Object.values(value as object).flatMap((propertyValue) =>
-    extractTransferable(propertyValue, seen),
-  );
+  const children = Array.isArray(value)
+    ? value
+    : Object.values(value as object);
+  for (const child of children) collect(child, seen, found);
 }

@@ -6,8 +6,8 @@
  * bundles the worker script along with all its dependencies (e.g. Luxon, date-fns, i18next), and allows
  * workerkit to manage worker thread creation and concurrency.
  */
-import { MainWorkerFactory } from '../tools';
-import WorkerFactory from '../tools/worker-factory/worker-factory';
+import { MainWorkerFactory } from '../../tools';
+import WorkerFactory from '../../tools/worker-factory/worker-factory';
 
 export async function runBundlerWorkerExample() {
   // Option 1: Using MainWorkerFactory with createWorker

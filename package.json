@@ -23,7 +23,8 @@
   },
   "files": [
     "dist",
-    "eslint-rules"
+    "eslint-rules",
+    "!eslint-rules/**/*.test.ts"
   ],
   "scripts": {
     "dev": "vite",
@@ -33,6 +34,11 @@
     "lint": "eslint --fix .",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:e2e": "playwright test --project=\"*:harness*\" && playwright test --project=\"*:demo*\"",
+    "test:e2e:full": "E2E_DIST=1 E2E_BROWSERS=chromium,firefox,webkit pnpm run test:e2e",
+    "test:e2e:example": "pnpm run build:lib && pnpm --filter workerkit-example-react-mui test:e2e",
+    "example:react": "node scripts/dev-example.mjs",
+    "typecheck": "tsc --noEmit -p . && tsc --noEmit -p e2e",
     "release": "release-it --ci",
     "release:patch": "release-it --increment patch --ci",
     "release:minor": "release-it --increment minor --ci",
@@ -59,11 +65,12 @@
       "eslint --fix",
       "prettier --write"
     ],
-    "**/*.{js,cjs,json,md}": [
+    "**/*.{js,cjs,mjs,json,md}": [
       "prettier --write"
     ]
   },
   "devDependencies": {
+    "@playwright/test": "1.56.1",
     "@release-it/conventional-changelog": "11.0.0",
     "@types/luxon": "^3.7.2",
     "@types/node": "^26.4.0",

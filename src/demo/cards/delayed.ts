@@ -1,5 +1,5 @@
 import { setRunning, setStatus, setDone, setError } from '../ui-helpers';
-import type { DelayedTaskResult } from '../../examples/delayed-task.worker.ts';
+import type { DelayedTaskResult } from '../examples/delayed-task.worker.ts';
 import { foreman } from '../demo.ts';
 
 export function initDelayedCard() {

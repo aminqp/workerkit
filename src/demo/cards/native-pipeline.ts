@@ -1,5 +1,5 @@
 import { setRunning, setStatus, setDone, setError } from '../ui-helpers';
-import type { NativePipelineSummary } from '../../examples/native-step3.worker.ts';
+import type { NativePipelineSummary } from '../examples/native-step3.worker.ts';
 import { foreman } from '../demo.ts';
 
 export function initNativePipelineCard() {

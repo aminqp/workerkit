@@ -1,4 +1,4 @@
-function wait({
+export function wait({
   data: { seconds },
   index,
 }: {
@@ -11,5 +11,3 @@ function wait({
 
   return `${index} = seconds: ${seconds}`;
 }
-
-export default wait;

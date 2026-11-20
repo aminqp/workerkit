@@ -23,7 +23,10 @@ export default defineConfig({
       formats: ['es', 'cjs'],
     },
     outDir: 'dist',
-    emptyOutDir: true,
+    // Publishing builds start from an empty dist/. The watch build behind
+    // `pnpm example:react` keeps it in place, so an example reloading in the
+    // middle of a rebuild never finds the package missing.
+    emptyOutDir: process.env.WORKERKIT_LIB_WATCH !== '1',
     rollupOptions: {
       // no external deps — library is self-contained
     },

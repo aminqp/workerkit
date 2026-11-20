@@ -7,10 +7,14 @@ import { ILogger } from '../logger/types';
 export interface RunWorkerContext {
   isTerminated: () => boolean;
   findWorkerByName: (name: string) => WorkerConfig | undefined;
+  trackWorker: (worker: Worker) => Worker;
+  terminateWorker: (worker: Worker) => void;
   memoryStore: MemoryStore;
   memoryWorkerProxy: MemoryWorkerProxy;
   factoryToken: string;
   threads: number;
   orchestrator: WorkerOrchestrator;
   logger: ILogger;
+  /** Signal of the factory run this call belongs to. */
+  signal: AbortSignal;
 }
